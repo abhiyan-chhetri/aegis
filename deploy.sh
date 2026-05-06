@@ -202,25 +202,27 @@ echo -e "  Host: $DB_HOST:$DB_PORT"
 # ==============================================================================
 echo -e "\n${YELLOW}[7/8] Installing dependencies and running migrations...${NC}"
 
-if [ ! -d "node_modules" ]; then
-    echo "Installing npm packages..."
-    npm install
-    echo -e "${GREEN}✓ Dependencies installed${NC}"
-else
-    echo -e "${GREEN}✓ Dependencies already installed${NC}"
-fi
-
-echo "Running Prisma migrations..."
-if [[ "$DEPLOYMENT_MODE" == "development" ]]; then
-    npx prisma migrate deploy || npx prisma db push --force-reset
-else
-    npx prisma migrate deploy
-fi
-echo -e "${GREEN}✓ Migrations completed${NC}"
+echo "Installing npm packages..."
+npm install
+echo -e "${GREEN}✓ Dependencies installed${NC}"
 
 echo "Generating Prisma client..."
 npx prisma generate
 echo -e "${GREEN}✓ Prisma client generated${NC}"
+
+echo "Running Prisma migrations..."
+if [[ "$DEPLOYMENT_MODE" == "development" ]]; then
+    # Development: reset DB completely (deploy.sh already recreated it above)
+    # If migrate deploy fails (e.g. 42P07 tables already exist from a previous
+    # partial run), fall back to db push which syncs schema without migration tracking
+    npx prisma migrate deploy 2>&1 || {
+        echo -e "${YELLOW}migrate deploy failed, falling back to db push...${NC}"
+        npx prisma db push --force-reset
+    }
+else
+    npx prisma migrate deploy
+fi
+echo -e "${GREEN}✓ Migrations completed${NC}"
 
 # ==============================================================================
 # 8. BUILD APPLICATION
