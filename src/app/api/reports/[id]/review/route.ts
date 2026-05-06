@@ -58,11 +58,11 @@ export async function POST(
       });
 
       // Update reviewerId via raw SQL (raw column)
-      await db.$executeRawUnsafe(`UPDATE Report SET reviewerId = ? WHERE id = ?`, reviewerId, id);
+      await db.$executeRawUnsafe(`UPDATE "Report" SET "reviewerId" = $1 WHERE id = $2`, reviewerId, id);
 
       // Log audit event (store reviewer name, not ID)
       await db.$executeRawUnsafe(
-        `INSERT INTO AuditLog (id, userId, action, entityType, entityId, changes, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         uuidv4(), session.id, 'submit', 'Report', id,
         JSON.stringify({ status: 'in-review', assignedTo: reviewer?.name || reviewerId }), new Date().toISOString()
       );
@@ -77,7 +77,7 @@ export async function POST(
 
       // Update reviewedAt and clear reviewComment via raw SQL
       await db.$executeRawUnsafe(
-        `UPDATE Report SET reviewComment = ?, reviewedAt = ? WHERE id = ?`,
+        `UPDATE "Report" SET "reviewComment" = $1, "reviewedAt" = $2 WHERE id = $3`,
         comment || '',
         new Date().toISOString(),
         id
@@ -85,7 +85,7 @@ export async function POST(
 
       // Get reviewer name first (used in both audit log and webhook)
       const rawRows = await db.$queryRawUnsafe<{ reviewerId: string }[]>(
-        `SELECT reviewerId FROM Report WHERE id = ?`, id
+        `SELECT "reviewerId" FROM "Report" WHERE id = $1`, id
       );
       let reviewerName = 'reviewer';
       if (rawRows[0]?.reviewerId) {
@@ -95,7 +95,7 @@ export async function POST(
 
       // Log audit event (store reviewer name, not ID)
       await db.$executeRawUnsafe(
-        `INSERT INTO AuditLog (id, userId, action, entityType, entityId, changes, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         uuidv4(), session.id, 'approve', 'Report', id,
         JSON.stringify({ status: 'approved', reviewedBy: reviewerName, comment: comment || '' }), new Date().toISOString()
       );
@@ -109,7 +109,7 @@ export async function POST(
       });
 
       await db.$executeRawUnsafe(
-        `UPDATE Report SET reviewComment = ?, reviewedAt = ? WHERE id = ?`,
+        `UPDATE "Report" SET "reviewComment" = $1, "reviewedAt" = $2 WHERE id = $3`,
         comment || '',
         new Date().toISOString(),
         id
@@ -117,7 +117,7 @@ export async function POST(
 
       // Get reviewer name first (used in both audit log and webhook)
       const rejectRawRows = await db.$queryRawUnsafe<{ reviewerId: string }[]>(
-        `SELECT reviewerId FROM Report WHERE id = ?`, id
+        `SELECT "reviewerId" FROM "Report" WHERE id = $1`, id
       );
       let rejectReviewerName = 'reviewer';
       if (rejectRawRows[0]?.reviewerId) {
@@ -127,7 +127,7 @@ export async function POST(
 
       // Log audit event (store reviewer name, not ID)
       await db.$executeRawUnsafe(
-        `INSERT INTO AuditLog (id, userId, action, entityType, entityId, changes, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         uuidv4(), session.id, 'reject', 'Report', id,
         JSON.stringify({ status: 'rejected', reviewedBy: rejectReviewerName, comment: comment || '' }), new Date().toISOString()
       );
@@ -139,12 +139,12 @@ export async function POST(
     // Record report version snapshot
     if (action !== 'submit') {
       const [latestVer] = await db.$queryRawUnsafe<{ versionNumber: number }[]>(
-        `SELECT versionNumber FROM ReportVersion WHERE reportId = ? ORDER BY versionNumber DESC LIMIT 1`, id
+        `SELECT "versionNumber" FROM "ReportVersion" WHERE "reportId" = $1 ORDER BY "versionNumber" DESC LIMIT 1`, id
       );
       const nextVer = (latestVer?.versionNumber || 0) + 1;
       await db.$executeRawUnsafe(
-        `INSERT INTO ReportVersion (id, reportId, versionNumber, status, approvedBy, rejectionReason, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO "ReportVersion" (id, "reportId", "versionNumber", status, "approvedBy", "rejectionReason", "createdAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         uuidv4(), id, nextVer,
         action === 'approve' ? 'approved' : 'rejected',
         action === 'approve' ? session.id : null,

@@ -10,7 +10,7 @@ type ContentCol = typeof CONTENT_COLS[number];
 
 export async function getRawContentFields(id: string): Promise<Record<ContentCol, string>> {
   const rows = await db.$queryRawUnsafe<Record<string, string>[]>(
-    `SELECT executiveSummary, methodology, attackNarrative, members FROM "Project" WHERE id = ?`,
+    `SELECT executiveSummary, methodology, attackNarrative, members FROM "Project" WHERE id = $1`,
     id
   );
   const row = rows[0] ?? {};
@@ -106,7 +106,7 @@ export async function PATCH(
         ? db.project.update({ where: { id }, data: prismaData })
         : Promise.resolve(null),
       ...rawUpdates.map(({ col, val }) =>
-        db.$executeRawUnsafe(`UPDATE "Project" SET "${col}" = ? WHERE id = ?`, val, id)
+        db.$executeRawUnsafe(`UPDATE "Project" SET "${col}" = $1 WHERE id = $2`, val, id)
       ),
     ]);
 
@@ -116,13 +116,13 @@ export async function PATCH(
 
     if (anythingChanged) {
       const existingReport = await db.$queryRawUnsafe<{ id: string; status: string }[]>(
-        `SELECT id, status FROM Report WHERE projectId = ?`, id
+        `SELECT id, status FROM "Report" WHERE "projectId" = $1`, id
       );
       const report = existingReport[0];
       if (report && (report.status === 'approved' || report.status === 'rejected')) {
         await db.report.update({ where: { id: report.id }, data: { status: 'in-review' } });
         await db.$executeRawUnsafe(
-          `UPDATE Report SET reviewComment = '', reviewedAt = NULL WHERE id = ?`,
+          `UPDATE "Report" SET "reviewComment" = '', "reviewedAt" = NULL WHERE id = $1`,
           report.id
         );
       }

@@ -168,6 +168,12 @@ echo -e "\n${YELLOW}[6/8] Configuring environment...${NC}"
 
 DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
 
+if [[ "$DEPLOYMENT_MODE" == "production" ]]; then
+    NEXTAUTH_URL="${NEXTAUTH_URL_PROD:-http://localhost:3000}"
+else
+    NEXTAUTH_URL="http://localhost:3000"
+fi
+
 cat > .env << EOF
 # Database Configuration
 DATABASE_URL="$DATABASE_URL"
@@ -177,7 +183,7 @@ NODE_ENV="$NODE_ENV"
 
 # Authentication
 NEXTAUTH_SECRET="$(openssl rand -base64 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
-NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_URL="$NEXTAUTH_URL"
 
 # Encryption
 ENCRYPTION_KEY="$(openssl rand -hex 16 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(16))')"
@@ -205,7 +211,11 @@ else
 fi
 
 echo "Running Prisma migrations..."
-npx prisma migrate deploy || npx prisma db push || npx prisma migrate dev --name init
+if [[ "$DEPLOYMENT_MODE" == "development" ]]; then
+    npx prisma migrate deploy || npx prisma db push --force-reset
+else
+    npx prisma migrate deploy
+fi
 echo -e "${GREEN}✓ Migrations completed${NC}"
 
 echo "Generating Prisma client..."

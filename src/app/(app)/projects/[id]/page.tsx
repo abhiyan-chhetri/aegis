@@ -25,7 +25,7 @@ export default async function ProjectPage({ params }: Props) {
       select: { id: true, name: true, initials: true, role: true, email: true },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT executiveSummary, methodology, attackNarrative, members FROM "Project" WHERE id = ?`, id
+      `SELECT executiveSummary, methodology, attackNarrative, members FROM "Project" WHERE id = $1`, id
     ),
   ]);
 
@@ -33,9 +33,9 @@ export default async function ProjectPage({ params }: Props) {
   const reportIds = project?.reports?.map((r: any) => r.id) ?? [];
   const reportReviewData: Record<string, { reviewComment: string; reviewedAt: string | null; reviewerId: string | null }> = {};
   if (reportIds.length > 0) {
-    const placeholders = reportIds.map(() => '?').join(',');
+    const placeholders = reportIds.map((_: any, i: number) => `$${i + 1}`).join(',');
     const reviewRows = await db.$queryRawUnsafe<any[]>(
-      `SELECT id, reviewComment, reviewedAt, reviewerId FROM Report WHERE id IN (${placeholders})`,
+      `SELECT id, "reviewComment", "reviewedAt", "reviewerId" FROM "Report" WHERE id IN (${placeholders})`,
       ...reportIds
     );
     for (const row of reviewRows) {

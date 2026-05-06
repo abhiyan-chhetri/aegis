@@ -67,13 +67,13 @@ export async function GET(_request: NextRequest) {
       // Upsert daily snapshot
       const today = new Date().toISOString().split('T')[0];
       const [existing] = await db.$queryRawUnsafe<any[]>(
-        `SELECT id FROM ProjectSnapshot WHERE projectId = ? AND date(snapshotDate) = ?`,
+        `SELECT id FROM "ProjectSnapshot" WHERE "projectId" = $1 AND DATE("snapshotDate") = $2`,
         project.id, today
       );
       if (!existing) {
         await db.$executeRawUnsafe(
-          `INSERT INTO ProjectSnapshot (id, projectId, snapshotDate, criticalCount, highCount, mediumCount, lowCount, createdAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO "ProjectSnapshot" (id, "projectId", "snapshotDate", "criticalCount", "highCount", "mediumCount", "lowCount", "createdAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           uuidv4(), project.id, new Date().toISOString(),
           m.critical, m.high, m.medium, m.low, new Date().toISOString()
         );
@@ -97,10 +97,10 @@ export async function GET(_request: NextRequest) {
 
     // 7-day trend snapshots
     const trendRows = await db.$queryRawUnsafe<any[]>(
-      `SELECT projectId, snapshotDate, criticalCount, highCount, mediumCount, lowCount
-       FROM ProjectSnapshot
-       WHERE snapshotDate >= datetime('now', '-7 days')
-       ORDER BY snapshotDate ASC`
+      `SELECT "projectId", "snapshotDate", "criticalCount", "highCount", "mediumCount", "lowCount"
+       FROM "ProjectSnapshot"
+       WHERE "snapshotDate" >= NOW() - INTERVAL '7 days'
+       ORDER BY "snapshotDate" ASC`
     );
 
     // Global team workload

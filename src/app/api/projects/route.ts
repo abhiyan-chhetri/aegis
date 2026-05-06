@@ -85,14 +85,14 @@ export async function POST(request: NextRequest) {
     // Set members via raw SQL
     const membersJson = Array.isArray(members) ? JSON.stringify(members) : (members ?? '[]');
     await db.$executeRawUnsafe(
-      `UPDATE "Project" SET members = ? WHERE id = ?`,
+      `UPDATE "Project" SET members = $1 WHERE id = $2`,
       membersJson,
       project.id
     );
 
     // Log audit event
     await db.$executeRawUnsafe(
-      `INSERT INTO AuditLog (id, userId, action, entityType, entityId, changes, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       uuidv4(), session.id, 'create', 'Project', project.id,
       JSON.stringify({ name, code, engagement, startDate, endDate }),
       new Date().toISOString()

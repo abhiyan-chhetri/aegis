@@ -60,13 +60,13 @@ export default async function DashboardPage() {
 
   // Reports assigned to me for review — use subqueries to avoid libsql JOIN/ALTER-TABLE-column issues
   const myReviewRows = session ? await db.$queryRawUnsafe<{ id: string; projectId: string; reviewComment: string; version: string }[]>(
-    `SELECT id, projectId, reviewComment, version FROM Report WHERE reviewerId = ? AND status = 'in-review'`,
+    `SELECT id, "projectId", "reviewComment", version FROM "Report" WHERE "reviewerId" = $1 AND status = 'in-review'`,
     session.id
   ) : [];
   const myReviews = await Promise.all(
     (myReviewRows as any[]).map(async (r: any) => {
       const [proj] = await db.$queryRawUnsafe<{ name: string; code: string }[]>(
-        `SELECT name, code FROM Project WHERE id = ?`, r.projectId
+        `SELECT name, code FROM "Project" WHERE id = $1`, r.projectId
       );
       return { ...r, projectName: proj?.name ?? '', projectCode: proj?.code ?? '' };
     })
@@ -74,13 +74,13 @@ export default async function DashboardPage() {
 
   // My reports with a decision (approved/rejected) — same safe pattern
   const myDecisionRows = session ? await db.$queryRawUnsafe<{ id: string; projectId: string; status: string; reviewComment: string; version: string }[]>(
-    `SELECT id, projectId, status, reviewComment, version FROM Report WHERE authorId = ? AND status IN ('approved', 'rejected') ORDER BY updatedAt DESC LIMIT 5`,
+    `SELECT id, "projectId", status, "reviewComment", version FROM "Report" WHERE "authorId" = $1 AND status IN ('approved', 'rejected') ORDER BY "updatedAt" DESC LIMIT 5`,
     session.id
   ) : [];
   const myReportDecisions = await Promise.all(
     (myDecisionRows as any[]).map(async (r: any) => {
       const [proj] = await db.$queryRawUnsafe<{ name: string; code: string }[]>(
-        `SELECT name, code FROM Project WHERE id = ?`, r.projectId
+        `SELECT name, code FROM "Project" WHERE id = $1`, r.projectId
       );
       return { ...r, projectName: proj?.name ?? '', projectCode: proj?.code ?? '' };
     })
@@ -98,24 +98,24 @@ export default async function DashboardPage() {
 
   // Mentions: comments where I'm mentioned
   const myMentionRows = session ? await db.$queryRawUnsafe<{ id: string; content: string; mentions: string; createdAt: string; findingId: string; userId: string; userName: string; projectId: string }[]>(
-    `SELECT fc.id, fc.content, fc.mentions, fc.createdAt, fc.findingId, u.id as userId, u.name as userName, f.projectId
-     FROM FindingComment fc
-     JOIN User u ON u.id = fc.userId
-     JOIN Finding f ON f.id = fc.findingId
-     WHERE fc.mentions LIKE ?
-     ORDER BY fc.createdAt DESC
+    `SELECT fc.id, fc.content, fc.mentions, fc."createdAt", fc."findingId", u.id as "userId", u.name as "userName", f."projectId"
+     FROM "FindingComment" fc
+     JOIN "User" u ON u.id = fc."userId"
+     JOIN "Finding" f ON f.id = fc."findingId"
+     WHERE fc.mentions LIKE $1
+     ORDER BY fc."createdAt" DESC
      LIMIT 10`,
     `%"${session.id}"%`
   ) : [];
   const myMentions = await Promise.all(
     (myMentionRows as any[]).map(async (c: any) => {
       const [finding] = await db.$queryRawUnsafe<{ title: string; projectId: string }[]>(
-        `SELECT title, projectId FROM Finding WHERE id = ?`, c.findingId
+        `SELECT title, "projectId" FROM "Finding" WHERE id = $1`, c.findingId
       );
 
 
       const [proj] = finding ? await db.$queryRawUnsafe<{ name: string; code: string }[]>(
-        `SELECT name, code FROM Project WHERE id = ?`, finding.projectId
+        `SELECT name, code FROM "Project" WHERE id = $1`, finding.projectId
       ) : [null];
       return { ...c, findingTitle: finding?.title ?? '', projectName: proj?.name ?? '', projectCode: proj?.code ?? '', projectId: c.projectId, createdAt: c.createdAt };
     })

@@ -14,12 +14,12 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const rows = await db.$queryRawUnsafe<any[]>(
-      `SELECT fc.id, fc.content, fc.mentions, fc.createdAt,
-              u.id as userId, u.name as userName, u.initials as userInitials
-       FROM FindingComment fc
-       JOIN User u ON u.id = fc.userId
-       WHERE fc.findingId = ?
-       ORDER BY fc.createdAt ASC`,
+      `SELECT fc.id, fc.content, fc.mentions, fc."createdAt",
+              u.id as "userId", u.name as "userName", u.initials as "userInitials"
+       FROM "FindingComment" fc
+       JOIN "User" u ON u.id = fc."userId"
+       WHERE fc."findingId" = $1
+       ORDER BY fc."createdAt" ASC`,
       findingId
     );
 
@@ -56,18 +56,18 @@ export async function POST(
     const now = new Date().toISOString();
 
     await db.$executeRawUnsafe(
-      `INSERT INTO FindingComment (id, findingId, userId, content, mentions, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "FindingComment" (id, "findingId", "userId", content, mentions, "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       id, findingId, session.id, content.trim(),
       JSON.stringify(mentions || []), now, now
     );
 
     const [row] = await db.$queryRawUnsafe<any[]>(
-      `SELECT fc.id, fc.content, fc.mentions, fc.createdAt,
-              u.id as userId, u.name as userName, u.initials as userInitials
-       FROM FindingComment fc
-       JOIN User u ON u.id = fc.userId
-       WHERE fc.id = ?`,
+      `SELECT fc.id, fc.content, fc.mentions, fc."createdAt",
+              u.id as "userId", u.name as "userName", u.initials as "userInitials"
+       FROM "FindingComment" fc
+       JOIN "User" u ON u.id = fc."userId"
+       WHERE fc.id = $1`,
       id
     );
 

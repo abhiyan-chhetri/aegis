@@ -17,8 +17,8 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
 
     await db.$executeRawUnsafe(
-      `INSERT INTO AuditLog (id, userId, action, entityType, entityId, changes, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       id, session.id, action, entityType, entityId,
       JSON.stringify(changes || {}), now
     );
@@ -40,15 +40,16 @@ export async function GET(request: NextRequest) {
     const entityId   = searchParams.get('entityId');
     const limit      = Math.min(parseInt(searchParams.get('limit') || '50'), 200);
 
-    let query = `SELECT al.id, al.action, al.entityType, al.entityId, al.changes, al.createdAt,
-                        u.id as userId, u.name as userName
-                 FROM AuditLog al JOIN User u ON u.id = al.userId`;
+    let query = `SELECT al.id, al.action, al."entityType", al."entityId", al.changes, al."createdAt",
+                        u.id as "userId", u.name as "userName"
+                 FROM "AuditLog" al JOIN "User" u ON u.id = al."userId"`;
     const args: any[] = [];
     const where: string[] = [];
-    if (entityType) { where.push('al.entityType = ?'); args.push(entityType); }
-    if (entityId)   { where.push('al.entityId = ?');   args.push(entityId); }
+    let paramIdx = 0;
+    if (entityType) { where.push(`al."entityType" = $${++paramIdx}`); args.push(entityType); }
+    if (entityId)   { where.push(`al."entityId" = $${++paramIdx}`);   args.push(entityId); }
     if (where.length) query += ' WHERE ' + where.join(' AND ');
-    query += ' ORDER BY al.createdAt DESC LIMIT ?';
+    query += ` ORDER BY al."createdAt" DESC LIMIT $${++paramIdx}`;
     args.push(limit);
 
     const rows = await db.$queryRawUnsafe<any[]>(query, ...args);

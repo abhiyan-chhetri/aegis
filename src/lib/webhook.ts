@@ -3,7 +3,7 @@ import { db } from './db';
 export async function sendWebhook(text: string) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows = await db.$queryRawUnsafe<{ value: string }[]>(
-    `SELECT value FROM AppSetting WHERE key = 'teamsWebhookUrl'`
+    `SELECT value FROM "AppSetting" WHERE key = 'teamsWebhookUrl'`
   );
   const url = rows[0]?.value?.trim();
   if (!url) return;

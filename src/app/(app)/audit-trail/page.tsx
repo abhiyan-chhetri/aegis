@@ -23,11 +23,11 @@ export default async function AuditTrailPage() {
 
   const [rows, allUsers] = await Promise.all([
     db.$queryRawUnsafe<AuditRow[]>(
-      `SELECT al.id, al.action, al.entityType, al.entityId, al.changes, al.createdAt,
-              u.name as userName
-       FROM AuditLog al
-       JOIN User u ON u.id = al.userId
-       ORDER BY al.createdAt DESC
+      `SELECT al.id, al.action, al."entityType", al."entityId", al.changes, al."createdAt",
+              u.name as "userName"
+       FROM "AuditLog" al
+       JOIN "User" u ON u.id = al."userId"
+       ORDER BY al."createdAt" DESC
        LIMIT 200`
     ),
     db.user.findMany({ select: { id: true, name: true } }),

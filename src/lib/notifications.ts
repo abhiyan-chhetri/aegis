@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 export async function getTeamsWebhookUrl(): Promise<string | null> {
   try {
     const rows = await db.$queryRawUnsafe<{ value: string }[]>(
-      `SELECT value FROM AppSetting WHERE key = 'teamsWebhookUrl'`
+      `SELECT value FROM "AppSetting" WHERE key = 'teamsWebhookUrl'`
     );
     return rows[0]?.value || null;
   } catch {

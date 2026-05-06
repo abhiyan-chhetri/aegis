@@ -17,7 +17,7 @@ export default async function EditProjectPage({ params }: Props) {
     }),
     db.user.findMany({ select: { id: true, name: true, email: true, role: true, team: true } }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT members FROM "Project" WHERE id = ?`, id
+      `SELECT members FROM "Project" WHERE id = $1`, id
     ),
   ]);
 

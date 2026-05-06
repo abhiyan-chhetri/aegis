@@ -15,7 +15,7 @@ export async function GET() {
 
     try {
       const rows = await db.$queryRawUnsafe<{ key: string; value: string }[]>(
-        `SELECT key, value FROM AppSetting`
+        `SELECT key, value FROM "AppSetting"`
       );
 
       for (const row of rows) {
@@ -84,11 +84,11 @@ export async function PATCH(request: NextRequest) {
           const id = uuidv4();
           // Use DELETE + INSERT pattern to avoid conflicts
           await db.$executeRawUnsafe(
-            `DELETE FROM AppSetting WHERE key = ?`,
+            `DELETE FROM "AppSetting" WHERE key = $1`,
             key
           );
           await db.$executeRawUnsafe(
-            `INSERT INTO AppSetting (id, key, value, createdAt, updatedAt) VALUES (?, ?, ?, datetime('now'), datetime('now'))`,
+            `INSERT INTO "AppSetting" (id, key, value, "createdAt", "updatedAt") VALUES ($1, $2, $3, NOW(), NOW())`,
             id,
             key,
             valueToStore
