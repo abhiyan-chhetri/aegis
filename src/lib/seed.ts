@@ -111,6 +111,18 @@ const LATEX_T2 = `% ────────────────────
 export async function seed() {
   console.log('Seeding database...');
 
+  // ── Verify DB connection & schema before seeding ──────────────────────────
+  try {
+    await db.$queryRawUnsafe(`SELECT 1`);
+  } catch (e) {
+    throw new Error(`Database connection failed. Run migrations first: npx prisma migrate deploy\n${e}`);
+  }
+  try {
+    await db.$queryRawUnsafe(`SELECT "executiveSummary" FROM "Project" LIMIT 0`);
+  } catch {
+    throw new Error('Schema mismatch: "Project"."executiveSummary" column missing. Run: npx prisma migrate deploy');
+  }
+
   // Users
   const hash = (p: string) => bcrypt.hashSync(p, 10);
   const users = await Promise.all([
@@ -197,8 +209,12 @@ export async function seed() {
   }
 
   // Report templates — HTML-based
+  // Order matters: reportData references createdTemplates[0/1/2] by index
+  // [0] = Executive Summary, [1] = Technical Report, [2] = Remediation Playbook
   const reportTemplates = [
-    { name: 'Technical Report', audience: 'Engineering', pages: '40+', tone: 'Detailed', engine: 'HTML', source: HTML_TEMPLATE },
+    { name: 'Executive Summary',     audience: 'Executive',   pages: '10+', tone: 'Summary',     engine: 'HTML', source: HTML_TEMPLATE },
+    { name: 'Technical Report',      audience: 'Engineering', pages: '40+', tone: 'Detailed',    engine: 'HTML', source: HTML_TEMPLATE },
+    { name: 'Remediation Playbook',  audience: 'Engineering', pages: '20+', tone: 'Remediation', engine: 'HTML', source: HTML_TEMPLATE },
   ];
 
   const createdTemplates: Array<{ id: string }> = [];

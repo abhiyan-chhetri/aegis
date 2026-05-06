@@ -124,21 +124,25 @@ model ReportTemplate {
 }
 
 model Report {
-  id           String          @id @default(cuid())
-  code         String          @unique
-  projectId    String
-  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  templateId   String?
-  template     ReportTemplate? @relation(fields: [templateId], references: [id])
-  templateName String          @default("")
-  version      String          @default("v1")
-  status       String          @default("draft")
-  authorId     String
-  author       User            @relation("ReportAuthor", fields: [authorId], references: [id])
-  pages        Int             @default(0)
-  size         String          @default("")
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  id            String          @id @default(cuid())
+  code          String          @unique
+  projectId     String
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  templateId    String?
+  template      ReportTemplate? @relation(fields: [templateId], references: [id])
+  templateName  String          @default("")
+  version       String          @default("v1")
+  status        String          @default("draft")
+  authorId      String
+  author        User            @relation("ReportAuthor", fields: [authorId], references: [id])
+  pages         Int             @default(0)
+  size          String          @default("")
+  // Review workflow fields (previously added manually outside Prisma)
+  reviewerId    String?
+  reviewComment String          @default("")
+  reviewedAt    String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   reportVersions ReportVersion[]
 }

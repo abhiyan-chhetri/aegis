@@ -21,7 +21,7 @@ export default async function ReportPage({ params }: Props) {
       },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT executiveSummary, methodology, attackNarrative, members FROM "Project" WHERE id = $1`, id
+      `SELECT "executiveSummary", methodology, "attackNarrative", members FROM "Project" WHERE id = $1`, id
     ),
     db.user.findMany({ select: { id: true, name: true, initials: true, role: true } }),
   ]);

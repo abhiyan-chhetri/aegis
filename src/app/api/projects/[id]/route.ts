@@ -10,7 +10,7 @@ type ContentCol = typeof CONTENT_COLS[number];
 
 export async function getRawContentFields(id: string): Promise<Record<ContentCol, string>> {
   const rows = await db.$queryRawUnsafe<Record<string, string>[]>(
-    `SELECT executiveSummary, methodology, attackNarrative, members FROM "Project" WHERE id = $1`,
+    `SELECT "executiveSummary", methodology, "attackNarrative", members FROM "Project" WHERE id = $1`,
     id
   );
   const row = rows[0] ?? {};
