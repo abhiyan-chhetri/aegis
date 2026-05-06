@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useLayoutEffect, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useCallback } from 'react';
 import { Ico } from '@/components/chrome/icons';
 
 // ── Layout constants ────────────────────────────────────────────────────────
@@ -717,131 +717,12 @@ function extractCSS(source: string): string {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-// ── AI Overlay (same pattern as finding editor) ────────────────────────────────
-function SummaryAIOverlay({ active, phase, findingCount }: { active: boolean; phase: string; findingCount: number }) {
-  const [dots, setDots] = useState('');
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 500);
-    return () => clearInterval(t);
-  }, [active]);
-
-  if (!active) return null;
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 300,
-      background: 'rgba(10,11,13,0.9)', backdropFilter: 'blur(14px)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 28,
-    }}>
-      <div style={{ position: 'relative', width: 130, height: 130 }}>
-        {[0, 1, 2].map(i => (
-          <div key={i} style={{
-            position: 'absolute', inset: 0, borderRadius: '50%',
-            border: '1px solid rgba(201,168,245,0.3)',
-            animation: `rptRing ${1.4 + i * 0.4}s ease-out infinite`,
-            animationDelay: `${i * 0.35}s`,
-          }} />
-        ))}
-        <div style={{
-          position: 'absolute', inset: '18%', borderRadius: '50%',
-          background: 'linear-gradient(135deg, #c9a8f5 0%, #5B9BD5 50%, #8FC97A 100%)',
-          animation: 'rptCore 4s ease-in-out infinite',
-          boxShadow: '0 0 50px rgba(201,168,245,0.4), 0 0 100px rgba(91,155,213,0.15)',
-        }} />
-      </div>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: '#f4f1ea', letterSpacing: '0.03em' }}>
-          {phase === 'thinking' ? `Analysing ${findingCount} finding${findingCount !== 1 ? 's' : ''}${dots}` : `Writing executive report${dots}`}
-        </div>
-        <div style={{ fontSize: 12.5, color: 'rgba(244,241,234,0.45)', marginTop: 10 }}>
-          AI is crafting a professional executive summary and methodology section
-        </div>
-      </div>
-      <style>{`
-        @keyframes rptRing { 0% { transform:scale(1);opacity:.5 } 100% { transform:scale(2.4);opacity:0 } }
-        @keyframes rptCore { 0%,100% { transform:scale(1) rotate(0deg) } 50% { transform:scale(1.1) rotate(180deg) } }
-      `}</style>
-    </div>
-  );
-}
 
 export function ReportPreview({ project, findings, counts, riskScore, latestReport, templateCSS, teamMembers = [], reportId, allUsers = [] }: Props) {
   const [generating, setGenerating] = useState(false);
   const [generated,  setGenerated]  = useState(false);
   const [exporting,  setExporting]  = useState(false);
   const [logoUrl, setLogoUrl] = useState('');
-
-  // Local copies of AI-generatable fields
-  const [execSummary, setExecSummary] = useState(project.executiveSummary || '');
-  const [methodology, setMethodology] = useState(project.methodology || '');
-  const [attackNarr,  setAttackNarr]  = useState(project.attackNarrative || '');
-
-  // AI generation state
-  const [aiActive,  setAiActive]  = useState(false);
-  const [aiPhase,   setAiPhase]   = useState<'thinking'|'writing'>('thinking');
-  const [aiSaved,   setAiSaved]   = useState(false);
-  const [aiError,   setAiError]   = useState('');
-
-  async function generateSummaryWithAI() {
-    if (aiActive) return;
-    setAiActive(true);
-    setAiPhase('thinking');
-    setAiError('');
-    try {
-      const res = await fetch('/api/ai/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'summary',
-          context: {
-            projectName: project.name,
-            engagement: project.engagement,
-            startDate: project.startDate,
-            endDate: project.endDate,
-            counts,
-            riskScore,
-            findings: findings.map(f => ({
-              title: f.title,
-              severity: f.severity,
-              description: f.description,
-              impact: f.impact,
-              remediation: f.remediation,
-              cwe: f.cwe,
-              cvss: f.cvss,
-            })),
-          },
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'AI generation failed');
-
-      setAiPhase('writing');
-      // Small pause for writing phase perception
-      await new Promise(r => setTimeout(r, 1000));
-
-      const r = data.result;
-      setExecSummary(r.executiveSummary || '');
-      setMethodology(r.methodology || '');
-      setAttackNarr(r.attackNarrative || '');
-
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'AI generation failed');
-    } finally {
-      setAiActive(false);
-    }
-  }
-
-  async function saveAISummary() {
-    try {
-      const res = await fetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ executiveSummary: execSummary, methodology, attackNarrative: attackNarr }),
-      });
-      if (res.ok) { setAiSaved(true); setTimeout(() => setAiSaved(false), 3000); }
-    } catch { /* ignore */ }
-  }
 
   // Fetch logo on mount
   React.useEffect(() => {
@@ -1052,7 +933,6 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
   return (
     <>
       <style>{css}</style>
-      <SummaryAIOverlay active={aiActive} phase={aiPhase} findingCount={findings.length} />
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
         {/* ══════════════════════ PAGES AREA ══════════════════════ */}
@@ -1184,8 +1064,8 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             <SecHead num="1">Executive Summary</SecHead>
 
             {/* Executive summary content — custom if provided, fallback to generated */}
-            {execSummary
-              ? renderMarkdown(execSummary)
+            {project.executiveSummary
+              ? renderMarkdown(project.executiveSummary)
               : <p className="rpt-p">
                   {`A total of ${totalFindings} ${totalFindings === 1 ? 'vulnerability was' : 'vulnerabilities were'} identified during the ${project.engagement} assessment of ${project.name}.` +
                   (critHigh > 0 ? ` ${critHigh} critical or high-severity ${critHigh === 1 ? 'finding requires' : 'findings require'} immediate remediation.` : ' No critical or high-severity findings were identified.')}
@@ -1326,8 +1206,8 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             </table>
 
             <SubHead num="3.2">Testing Methodology</SubHead>
-            {methodology ? (
-              renderMarkdown(methodology)
+            {project.methodology ? (
+              renderMarkdown(project.methodology)
             ) : (
               <p className="rpt-p">
                 The engagement followed the <em>PTES</em> execution phases mapped to <em>OWASP WSTG v4.2</em> controls,
@@ -1373,10 +1253,10 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
               of out-of-scope third-party processors. Testing was conducted during agreed windows only.
             </div>
 
-            {attackNarr && (
+            {project.attackNarrative && (
               <>
                 <SubHead num="3.4">Attack Narrative</SubHead>
-                {renderMarkdown(attackNarr)}
+                {renderMarkdown(project.attackNarrative)}
               </>
             )}
           </Page>
@@ -1879,52 +1759,6 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
 
           {/* Actions */}
           <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }}>
-            {/* AI error */}
-            {aiError && (
-              <div style={{ fontSize: 11, color: 'var(--sev-critical)', background: 'var(--sev-critical-bg)', borderRadius: 'var(--r-sm)', padding: '8px 10px', border: '1px solid rgba(255,92,58,.2)' }}>
-                {aiError}
-                <button onClick={() => setAiError('')} style={{ float: 'right', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', opacity: .6 }}>✕</button>
-              </div>
-            )}
-
-            {/* Generate with AI */}
-            <button
-              onClick={generateSummaryWithAI}
-              disabled={aiActive}
-              title="Generate executive summary, methodology & attack narrative with AI"
-              style={{
-                width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: 7,
-                padding: '8px 0', borderRadius: 'var(--r-sm)', border: '1px solid rgba(201,168,245,0.35)',
-                cursor: 'pointer', fontSize: 12.5, fontWeight: 600,
-                background: 'linear-gradient(135deg,rgba(201,168,245,0.1) 0%,rgba(91,155,213,0.1) 100%)',
-                color: 'var(--ink-1)', transition: 'all .15s',
-              }}
-              onMouseEnter={e => { if (!aiActive) { e.currentTarget.style.background = 'linear-gradient(135deg,rgba(201,168,245,0.2) 0%,rgba(91,155,213,0.2) 100%)'; e.currentTarget.style.boxShadow = '0 0 16px rgba(201,168,245,0.2)'; } }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'linear-gradient(135deg,rgba(201,168,245,0.1) 0%,rgba(91,155,213,0.1) 100%)'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <Ico name="sparkles" size={14} style={{ color: '#b08fe8' }} />
-              {aiActive ? 'Generating…' : '✨ Generate with AI'}
-            </button>
-
-            {/* Save AI generated content */}
-            {(execSummary !== (project.executiveSummary || '') ||
-              methodology !== (project.methodology || '') ||
-              attackNarr  !== (project.attackNarrative || '')) && (
-              <button
-                onClick={saveAISummary}
-                style={{
-                  width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center', gap: 7,
-                  padding: '7px 0', borderRadius: 'var(--r-sm)', fontSize: 12, cursor: 'pointer',
-                  background: aiSaved ? 'rgba(143,201,122,0.12)' : 'var(--bg-2)',
-                  border: `1px solid ${aiSaved ? 'rgba(143,201,122,0.3)' : 'var(--line-1)'}`,
-                  color: aiSaved ? 'var(--status-resolved)' : 'var(--ink-2)',
-                }}
-              >
-                <Ico name={aiSaved ? 'check' : 'save'} size={13} />
-                {aiSaved ? 'Saved to project' : 'Save AI content to project'}
-              </button>
-            )}
-
             <button
               className="btn btn-primary"
               style={{ width: '100%', justifyContent: 'center' }}

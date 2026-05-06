@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  initials  String   @default("")
+  role      String   @default("Pentester")
+  team      String   @default("Offensive")
+  password  String
+  createdAt DateTime @default(now())
+
+  projectsLed   Project[]  @relation("ProjectLead")
+  findings      Finding[]  @relation("FindingAssignee")
+  reportAuthors Report[]   @relation("ReportAuthor")
+  activities    Activity[]
+  auditLogs     AuditLog[]
+  approvedReportVersions ReportVersion[] @relation("ReportApprover")
+  findingComments FindingComment[]
+}
+
+model Project {
+  id               String   @id @default(cuid())
+  code             String   @unique
+  name             String
+  engagement       String
+  scope            String   @default("[]")
+  executiveSummary String   @default("")
+  methodology      String   @default("")
+  attackNarrative  String   @default("")
+  members          String   @default("[]")
+  status           String   @default("in-progress")
+  progress         Int      @default(0)
+  startDate        String
+  endDate          String
+  leadId           String
+  lead             User     @relation("ProjectLead", fields: [leadId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  findings   Finding[]
+  reports    Report[]
+  activities Activity[]
+  snapshots  ProjectSnapshot[]
+}
+
+model Finding {
+  id           String   @id @default(cuid())
+  code         String
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title        String
+  severity     String   @default("medium")
+  status       String   @default("open")
+  cvss         Float    @default(0)
+  cvssVector   String   @default("")
+  cwe          String   @default("")
+  owasp        String   @default("")
+  component    String   @default("")
+  assets       String   @default("[]")
+  assigneeId   String?
+  assignee     User?    @relation("FindingAssignee", fields: [assigneeId], references: [id])
+  summary      String   @default("")
+  description  String   @default("")
+  reproduction String   @default("")
+  impact       String   @default("")
+  remediation  String   @default("")
+  references   String   @default("")
+  hasCVE       Boolean  @default(false)
+  discovered   String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  evidence   Evidence[]
+  activities Activity[]
+  comments   FindingComment[]
+}
+
+model Evidence {
+  id        String   @id @default(cuid())
+  findingId String
+  finding   Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  type      String   @default("screenshot")
+  caption   String   @default("")
+  content   String   @default("")
+  filename  String   @default("")
+  createdAt DateTime @default(now())
+}
+
+model VulnTemplate {
+  id          String @id @default(cuid())
+  code        String @unique
+  title       String
+  cwe         String @default("")
+  severity    String @default("medium")
+  owner       String @default("AppSec")
+  description String @default("")
+  reproduction String @default("")
+  impact      String @default("")
+  remediation String @default("")
+  uses        Int    @default(0)
+}
+
+model ReportTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  audience  String   @default("Engineering")
+  pages     String   @default("10+")
+  tone      String   @default("Detailed")
+  engine    String   @default("HTML")
+  source    String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reports Report[]
+}
+
+model Report {
+  id           String          @id @default(cuid())
+  code         String          @unique
+  projectId    String
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  templateId   String?
+  template     ReportTemplate? @relation(fields: [templateId], references: [id])
+  templateName String          @default("")
+  version      String          @default("v1")
+  status       String          @default("draft")
+  authorId     String
+  author       User            @relation("ReportAuthor", fields: [authorId], references: [id])
+  pages        Int             @default(0)
+  size         String          @default("")
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  reportVersions ReportVersion[]
+}
+
+model Activity {
+  id        String   @id @default(cuid())
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  findingId String?
+  finding   Finding? @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  target    String
+  detail    String   @default("")
+  badge     String   @default("")
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  changes    String   @default("{}")
+  createdAt  DateTime @default(now())
+}
+
+model ReportVersion {
+  id              String   @id @default(cuid())
+  reportId        String
+  report          Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  status          String
+  approvedBy      String?
+  approver        User?    @relation("ReportApprover", fields: [approvedBy], references: [id])
+  rejectionReason String   @default("")
+  content         String   @default("")
+  createdAt       DateTime @default(now())
+}
+
+model FindingComment {
+  id        String   @id @default(cuid())
+  findingId String
+  finding   Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  content   String
+  mentions  String   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProjectSnapshot {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshotDate DateTime
+  criticalCount Int     @default(0)
+  highCount    Int      @default(0)
+  mediumCount  Int      @default(0)
+  lowCount     Int      @default(0)
+  createdAt    DateTime @default(now())
+}
+
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  isSecret  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

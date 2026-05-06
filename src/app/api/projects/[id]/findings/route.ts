@@ -118,7 +118,8 @@ export async function POST(
           projectId,
           action: 'created',
           target: finding.title,
-          badge: severity.toUpperCase(),
+          detail: `[${finding.code}] ${severity.toUpperCase()} severity finding`,
+          badge: 'NEW',
         },
       });
     }

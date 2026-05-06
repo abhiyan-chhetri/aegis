@@ -349,7 +349,8 @@ function CategoriesTab() {
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
-      const raw = d.settings?.engagementTypes;
+      const rawSetting = d.settings?.engagementTypes;
+      const raw = typeof rawSetting === 'string' ? rawSetting : rawSetting?.value;
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
@@ -448,7 +449,11 @@ function IntegrationsTab() {
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
-      if (d.settings?.teamsWebhookUrl) setWebhookUrl(d.settings.teamsWebhookUrl);
+      if (d.settings?.teamsWebhookUrl) {
+        const setting = d.settings.teamsWebhookUrl;
+        const value = typeof setting === 'string' ? setting : setting.value;
+        setWebhookUrl(value || '');
+      }
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
@@ -544,8 +549,10 @@ function BrandingTab() {
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
-      const logo = d.settings?.logo;
-      const slaSettings = d.settings?.slaSettings;
+      const logoSetting = d.settings?.logo;
+      const slaSetting = d.settings?.slaSettings;
+      const logo = typeof logoSetting === 'string' ? logoSetting : logoSetting?.value;
+      const slaSettings = typeof slaSetting === 'string' ? slaSetting : slaSetting?.value;
       if (logo) setLogoUrl(logo);
       if (slaSettings) {
         try {
@@ -811,13 +818,17 @@ function AITab() {
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
       const s = d.settings || {};
-      if (s.aiProvider) setProvider(s.aiProvider as AIProvider);
-      if (s.aiApiKey) setApiKey(s.aiApiKey);
-      if (s.aiBaseUrl) setBaseUrl(s.aiBaseUrl);
-      if (s.aiModel) setModel(s.aiModel);
-      if (s.aiRegion) setRegion(s.aiRegion);
-      if (s.aiAccessKeyId) setAccessKeyId(s.aiAccessKeyId);
-      if (s.aiSecretAccessKey) setSecretKey(s.aiSecretAccessKey);
+      const getValue = (key: string) => {
+        const val = s[key];
+        return typeof val === 'string' ? val : val?.value || '';
+      };
+      if (s.aiProvider) setProvider(getValue('aiProvider') as AIProvider);
+      if (s.aiApiKey) setApiKey(getValue('aiApiKey'));
+      if (s.aiBaseUrl) setBaseUrl(getValue('aiBaseUrl'));
+      if (s.aiModel) setModel(getValue('aiModel'));
+      if (s.aiRegion) setRegion(getValue('aiRegion'));
+      if (s.aiAccessKeyId) setAccessKeyId(getValue('aiAccessKeyId'));
+      if (s.aiSecretAccessKey) setSecretKey(getValue('aiSecretAccessKey'));
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);

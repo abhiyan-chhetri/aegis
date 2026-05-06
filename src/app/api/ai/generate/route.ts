@@ -5,7 +5,7 @@ import { generateFinding, generateSummary, type AIConfig } from '@/lib/ai';
 
 async function getAIConfig(): Promise<AIConfig> {
   const rows = await db.$queryRawUnsafe<{ key: string; value: string }[]>(
-    `SELECT key, value FROM AppSetting WHERE key IN ('aiProvider','aiApiKey','aiBaseUrl','aiModel','aiRegion','aiAccessKeyId','aiSecretAccessKey')`
+    `SELECT key, value FROM AppSetting WHERE key IN ('aiProvider','aiApiKey','aiBaseUrl','aiModel','aiRegion','aiAccessKeyId','aiSecretAccessKey','aiBedrockApiKey')`
   );
   const settings: Record<string, string> = {};
   for (const row of rows) settings[row.key] = row.value;
@@ -18,6 +18,7 @@ async function getAIConfig(): Promise<AIConfig> {
     region: settings.aiRegion || '',
     accessKeyId: settings.aiAccessKeyId || '',
     secretAccessKey: settings.aiSecretAccessKey || '',
+    bedrockApiKey: settings.aiBedrockApiKey || '',
   };
 }
 

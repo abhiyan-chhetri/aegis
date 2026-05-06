@@ -6,11 +6,12 @@ export type AIProvider = 'demo' | 'anthropic' | 'openai' | 'bedrock';
 export interface AIConfig {
   provider: AIProvider;
   apiKey?: string;
-  baseUrl?: string;   // for openai-compatible APIs
+  baseUrl?: string;      // for openai-compatible APIs
   model?: string;
-  region?: string;    // bedrock
-  accessKeyId?: string;    // bedrock
-  secretAccessKey?: string; // bedrock
+  region?: string;       // bedrock
+  accessKeyId?: string;  // bedrock (IAM)
+  secretAccessKey?: string; // bedrock (IAM)
+  bedrockApiKey?: string;   // bedrock (API key auth — alternative to IAM)
 }
 
 export interface FindingGenerationContext {
@@ -22,6 +23,7 @@ export interface FindingGenerationContext {
 }
 
 export interface GeneratedFinding {
+  title: string;
   summary: string;
   description: string;
   reproduction: string;
@@ -54,6 +56,7 @@ export interface ExecutiveSummaryContext {
 }
 
 export interface GeneratedSummary {
+  title: string;
   executiveSummary: string;
   methodology: string;
   attackNarrative: string;
@@ -62,6 +65,7 @@ export interface GeneratedSummary {
 // ── Demo Data ─────────────────────────────────────────────────────────────────
 
 const DEMO_FINDING: GeneratedFinding = {
+  title: 'Insecure Direct Object Reference (IDOR) in User Account Management',
   summary: 'An Insecure Direct Object Reference (IDOR) vulnerability was identified in the user account management endpoint, allowing authenticated attackers to modify other users\' account credentials by manipulating user identifiers in API requests.',
   description: `## Overview
 
@@ -204,6 +208,7 @@ function buildDemoSummary(ctx: ExecutiveSummaryContext): GeneratedSummary {
     .join('\n');
 
   return {
+    title: `Security Assessment Report: ${critCount + highCount > 0 ? 'Critical Issues Identified' : 'Moderate Risk Posture'}`,
     executiveSummary: `## Executive Summary
 
 ${ctx.projectName} engaged our security team to conduct a comprehensive penetration assessment of its ${ctx.engagement} environment${ctx.startDate ? ` between ${ctx.startDate} and ${ctx.endDate}` : ''}. The objective was to identify, validate, and prioritize exploitable security vulnerabilities before malicious actors could exploit them.
@@ -304,6 +309,7 @@ Your task is to analyze a vulnerability description and produce a complete, prof
 
 Return ONLY a valid JSON object with these exact fields:
 {
+  "title": "Professional finding title (5-10 words, e.g. 'Insecure Direct Object Reference in User Management')",
   "summary": "1-2 sentence executive-level summary (no markdown)",
   "description": "Detailed markdown description: overview, technical details with code blocks if applicable",
   "reproduction": "Step-by-step reproduction in markdown with numbered steps and code blocks",
@@ -330,16 +336,17 @@ Use proper markdown formatting. Include realistic HTTP request/response examples
 
 const SUMMARY_SYSTEM_PROMPT = `You are a senior penetration testing lead with 30+ years of experience writing executive-level security reports for C-suite audiences and technical teams alike.
 
-You will be provided with structured finding data from a completed penetration test. Your task is to write three sections for the final report.
+You will be provided with structured finding data from a completed penetration test. Your task is to write four sections for the final report, including a compelling title.
 
 Return ONLY a valid JSON object with these exact fields:
 {
+  "title": "Professional report title (5-10 words, e.g. 'Security Assessment Report: Critical Vulnerabilities Identified')",
   "executiveSummary": "Markdown — executive summary including risk posture table, key findings overview, and management recommendations",
   "methodology": "Markdown — testing methodology covering phases, standards used (PTES, OWASP), and tools",
   "attackNarrative": "Markdown — narrative description of the attack path, attack chains discovered, and defensive gaps"
 }
 
-Write in a professional, clear style suitable for both technical and non-technical audiences. Use markdown tables, bold key terms, and code blocks where appropriate.`;
+Write in a professional, clear style suitable for both technical and non-technical audiences. Use markdown tables, bold key terms, and code blocks where appropriate. The title should be specific to the project/engagement and highlight the key risk posture.`;
 
 function buildFindingUserMessage(ctx: FindingGenerationContext): string {
   return `Vulnerability Title: ${ctx.title}
@@ -504,7 +511,19 @@ async function callAI(config: AIConfig, systemPrompt: string, userMessage: strin
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
-    const headers = await signBedrockRequest('POST', url, body, region, config.accessKeyId || '', config.secretAccessKey || '');
+
+    let headers: Record<string, string>;
+    if (config.bedrockApiKey) {
+      // API key auth — no SigV4 needed
+      headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': config.bedrockApiKey,
+      };
+    } else {
+      // IAM SigV4 signing
+      headers = await signBedrockRequest('POST', url, body, region, config.accessKeyId || '', config.secretAccessKey || '');
+    }
+
     const res = await fetch(url, { method: 'POST', headers, body });
     if (!res.ok) {
       const err = await res.text();
@@ -535,6 +554,7 @@ export async function generateFinding(config: AIConfig, ctx: FindingGenerationCo
   const parsed = extractJSON(raw) as Partial<GeneratedFinding>;
 
   return {
+    title:        parsed.title        || 'Security Finding',
     summary:      parsed.summary      || '',
     description:  parsed.description  || '',
     reproduction: parsed.reproduction || '',
@@ -556,6 +576,7 @@ export async function generateSummary(config: AIConfig, ctx: ExecutiveSummaryCon
   const parsed = extractJSON(raw) as Partial<GeneratedSummary>;
 
   return {
+    title:             parsed.title || 'Security Assessment Report',
     executiveSummary: parsed.executiveSummary || '',
     methodology:      parsed.methodology      || '',
     attackNarrative:  parsed.attackNarrative  || '',

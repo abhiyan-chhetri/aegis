@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
 import { FindingComments } from './FindingComments';
+import { ScreenshotAnnotator } from './ScreenshotAnnotator';
 
 // ── AI Generation Overlay ─────────────────────────────────────────────────────
 type AIPhase = 'idle' | 'thinking' | 'writing' | 'done';
@@ -333,6 +334,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
   const [aiPhase, setAiPhase] = useState<AIPhase>('idle');
   const [aiError, setAiError] = useState('');
+  const [annotating, setAnnotating] = useState<string | null>(null); // evidence ID being annotated
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -556,6 +558,18 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
     setEditCap(null);
   }
 
+  // Save annotated image back to the evidence record
+  async function saveAnnotation(dataUrl: string) {
+    if (!annotating) return;
+    await fetch(`/api/evidence/${annotating}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: dataUrl }),
+    });
+    setEvidence(prev => prev.map(e => e.id === annotating ? { ...e, content: dataUrl } : e));
+    setAnnotating(null);
+  }
+
   // Toolbar
   const TOOLBAR = [
     {icon:'bold',      label:'Bold',       ins:'**bold**'},
@@ -605,6 +619,18 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
     <div style={{flex:1,display:'flex',overflow:'hidden',flexDirection:'column'}}>
       {/* AI Overlay */}
       <AIOverlay phase={aiPhase} onClose={() => setAiPhase('idle')} />
+
+      {/* Screenshot Annotator */}
+      {annotating && (() => {
+        const ev = evidence.find(e => e.id === annotating);
+        return ev ? (
+          <ScreenshotAnnotator
+            imageUrl={ev.content}
+            onSave={saveAnnotation}
+            onClose={() => setAnnotating(null)}
+          />
+        ) : null;
+      })()}
 
       {/* Title */}
       <div style={{padding:'14px 20px',borderBottom:'1px solid var(--line-1)',background:'var(--bg-0)',flexShrink:0,display:'flex',alignItems:'center',gap:12}}>
@@ -774,11 +800,24 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
                     <div style={{position:'relative',height:76,background:'var(--bg-2)',overflow:'hidden'}}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={ev.content} alt={ev.caption||ev.filename} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>
+                      {/* Delete */}
                       <button onClick={()=>deleteEvidence(ev.id)} style={{
                         position:'absolute',top:4,right:4,width:18,height:18,borderRadius:'50%',
                         background:'rgba(0,0,0,.65)',border:'none',cursor:'pointer',
                         color:'#fff',fontSize:9,display:'flex',alignItems:'center',justifyContent:'center',
                       }}>✕</button>
+                      {/* Annotate */}
+                      <button
+                        onClick={()=>setAnnotating(ev.id)}
+                        title="Annotate screenshot"
+                        style={{
+                          position:'absolute',top:4,left:4,width:18,height:18,borderRadius:'50%',
+                          background:'rgba(0,0,0,.65)',border:'none',cursor:'pointer',
+                          color:'#fff',fontSize:9,display:'flex',alignItems:'center',justifyContent:'center',
+                        }}
+                      >
+                        <Ico name="pen" size={9}/>
+                      </button>
                     </div>
 
                     {/* Caption */}
