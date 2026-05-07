@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { sendWebhook } from '@/lib/webhook';
 
 export async function GET(
   _request: NextRequest,
@@ -159,18 +160,74 @@ export async function PATCH(
         console.warn('[activity log skipped]', actErr);
       }
 
-      // Revert latest approved/in-review report to draft — finding changed means report needs re-review
+      // Fire webhook for notable finding changes (status resolved/accepted, severity changes)
+      try {
+        const projectRow = await db.project.findUnique({
+          where: { id: currentFinding.projectId },
+          select: { name: true },
+        });
+        const ts = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        if (changes.includes('status') && changes.length === 1) {
+          const oldStatus = currentFinding.status;
+          const newStatus = updateData.status as string;
+          const statusEmoji = newStatus === 'resolved' ? '✅' : newStatus === 'accepted' ? '🔵' : newStatus === 'in-progress' ? '🔄' : '📌';
+          sendWebhook(
+            `${statusEmoji} <b>AEGIS — Finding Status Changed</b><br><br>` +
+            `🔍 <b>Finding:</b> [${finding.code}] ${finding.title}<br>` +
+            `📋 <b>Project:</b> ${projectRow?.name ?? ''}<br>` +
+            `🔄 <b>Status:</b> ${oldStatus} → <b>${newStatus}</b><br>` +
+            `✍️ <b>Updated by:</b> ${session.name || 'Unknown'}<br>` +
+            `🕐 <b>Time:</b> ${ts}`
+          );
+        } else if (changes.includes('severity') && changes.length === 1) {
+          const oldSev = currentFinding.severity;
+          const newSev = updateData.severity as string;
+          const sevEmoji = newSev === 'critical' ? '🔴' : newSev === 'high' ? '🟠' : newSev === 'medium' ? '🟡' : newSev === 'low' ? '🟢' : 'ℹ️';
+          sendWebhook(
+            `${sevEmoji} <b>AEGIS — Finding Severity Changed</b><br><br>` +
+            `🔍 <b>Finding:</b> [${finding.code}] ${finding.title}<br>` +
+            `📋 <b>Project:</b> ${projectRow?.name ?? ''}<br>` +
+            `⚠️ <b>Severity:</b> ${oldSev} → <b>${newSev}</b><br>` +
+            `✍️ <b>Updated by:</b> ${session.name || 'Unknown'}<br>` +
+            `🕐 <b>Time:</b> ${ts}`
+          );
+        }
+      } catch (whErr) {
+        console.warn('[finding webhook skipped]', whErr);
+      }
+
+      // Revert report status when a finding is changed:
+      //   approved (final)  → in-review + assign random team member
+      //   in-review/rejected → draft so author re-submits
       try {
         const latestReport = await db.report.findFirst({
           where: { projectId: currentFinding.projectId },
           orderBy: { createdAt: 'desc' },
           select: { id: true, status: true },
         });
-        if (latestReport && (latestReport.status === 'approved' || latestReport.status === 'in-review')) {
-          await db.report.update({
-            where: { id: latestReport.id },
-            data: { status: 'draft' },
-          });
+        if (latestReport && latestReport.status !== 'draft') {
+          let newStatus = 'draft';
+          let newReviewerId: string | null = null;
+
+          if (latestReport.status === 'approved') {
+            newStatus = 'in-review';
+            // Pick a random project team member as reviewer
+            const memberRows = await db.$queryRawUnsafe<{ members: string }[]>(
+              `SELECT members FROM "Project" WHERE id = $1`, currentFinding.projectId
+            );
+            let memberIds: string[] = [];
+            try { memberIds = JSON.parse(memberRows[0]?.members ?? '[]'); } catch { /* noop */ }
+            if (memberIds.length > 0) {
+              newReviewerId = memberIds[Math.floor(Math.random() * memberIds.length)];
+            }
+          }
+
+          await db.report.update({ where: { id: latestReport.id }, data: { status: newStatus } });
+          await db.$executeRawUnsafe(
+            `UPDATE "Report" SET "reviewComment" = '', "reviewedAt" = NULL, "reviewerId" = $1 WHERE id = $2`,
+            newReviewerId, latestReport.id
+          );
         }
       } catch (reportErr) {
         console.warn('[report revert skipped]', reportErr);

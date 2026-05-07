@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { sendWebhook } from '@/lib/webhook';
 
 // All content fields that we manage via raw SQL (bypasses Prisma schema validation entirely)
 // This includes executiveSummary even though it's in the original schema — raw SQL is safer
@@ -110,21 +111,57 @@ export async function PATCH(
       ),
     ]);
 
-    // ── Revert report to 'in-review' if any project content changed ──────────
-    // Content changes (text fields, members, metadata) invalidate an approved/rejected report
+    // ── Revert report status when project content changes ────────────────────
+    // approved (final) → in-review with random team member assigned as reviewer
+    // in-review / rejected → draft so author re-submits
     const anythingChanged = rawUpdates.length > 0 || Object.keys(prismaData).length > 0;
 
     if (anythingChanged) {
       const existingReport = await db.$queryRawUnsafe<{ id: string; status: string }[]>(
-        `SELECT id, status FROM "Report" WHERE "projectId" = $1`, id
+        `SELECT id, status FROM "Report" WHERE "projectId" = $1 LIMIT 1`, id
       );
       const report = existingReport[0];
-      if (report && (report.status === 'approved' || report.status === 'rejected')) {
-        await db.report.update({ where: { id: report.id }, data: { status: 'in-review' } });
+      if (report && report.status !== 'draft') {
+        let newStatus = 'draft';
+        let newReviewerId: string | null = null;
+
+        if (report.status === 'approved') {
+          // Report was finalised — revert to in-review and assign a random team member
+          newStatus = 'in-review';
+          const memberRows = await db.$queryRawUnsafe<{ members: string }[]>(
+            `SELECT members FROM "Project" WHERE id = $1`, id
+          );
+          let memberIds: string[] = [];
+          try { memberIds = JSON.parse(memberRows[0]?.members ?? '[]'); } catch { /* noop */ }
+          if (memberIds.length > 0) {
+            newReviewerId = memberIds[Math.floor(Math.random() * memberIds.length)];
+          }
+        }
+
+        await db.report.update({ where: { id: report.id }, data: { status: newStatus } });
         await db.$executeRawUnsafe(
-          `UPDATE "Report" SET "reviewComment" = '', "reviewedAt" = NULL WHERE id = $1`,
-          report.id
+          `UPDATE "Report" SET "reviewComment" = '', "reviewedAt" = NULL, "reviewerId" = $1 WHERE id = $2`,
+          newReviewerId, report.id
         );
+
+        // Notify via webhook when a finalised report is reopened
+        if (report.status === 'approved') {
+          let reviewerName = 'a team member';
+          if (newReviewerId) {
+            const rev = await db.user.findUnique({ where: { id: newReviewerId }, select: { name: true } });
+            if (rev) reviewerName = rev.name;
+          }
+          const projectRow = await db.project.findUnique({ where: { id }, select: { name: true } });
+          const ts = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          sendWebhook(
+            `🔄 <b>AEGIS — Finalised Report Reopened</b><br><br>` +
+            `📋 <b>Project:</b> ${projectRow?.name ?? id}<br>` +
+            `✏️ <b>Reason:</b> Project content was edited after approval<br>` +
+            `👤 <b>Re-assigned to:</b> ${reviewerName}<br>` +
+            `🕐 <b>Time:</b> ${ts}<br><br>` +
+            `<i>The report has been moved back to <b>In Review</b> and needs re-approval.</i>`
+          );
+        }
       }
     }
 

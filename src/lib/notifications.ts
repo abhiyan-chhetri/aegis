@@ -1,8 +1,10 @@
 /* ── Teams Webhook Notifications ──────────────────────────────────────────── */
 
+import { sendWebhook } from '@/lib/webhook';
 import { db } from '@/lib/db';
 
 export async function getTeamsWebhookUrl(): Promise<string | null> {
+  // Kept for backwards-compat; sendWebhook reads the URL itself
   try {
     const rows = await db.$queryRawUnsafe<{ value: string }[]>(
       `SELECT value FROM "AppSetting" WHERE key = 'teamsWebhookUrl'`
@@ -19,7 +21,7 @@ interface MentionedUser {
 }
 
 export async function notifyMention(params: {
-  webhookUrl: string;
+  webhookUrl: string; // kept for compat, sendWebhook reads its own URL
   mentionedUsers: MentionedUser[];
   commenterName: string;
   findingTitle: string;
@@ -28,21 +30,24 @@ export async function notifyMention(params: {
   findingId: string;
   commentContent: string;
 }) {
-  if (!params.webhookUrl || params.mentionedUsers.length === 0) return;
+  if (params.mentionedUsers.length === 0) return;
 
-  const mentionList = params.mentionedUsers.map(u => u.name).join(', ');
-  const message = `@${mentionList}: ${params.commenterName} mentioned you on "${params.findingTitle}" in ${params.projectName}\n\n"${params.commentContent.substring(0, 200)}${params.commentContent.length > 200 ? '...' : ''}"`;
+  const mentionList = params.mentionedUsers.map(u => `<b>${u.name}</b>`).join(', ');
+  const preview = params.commentContent.length > 200
+    ? params.commentContent.substring(0, 200) + '…'
+    : params.commentContent;
+  const ts = new Date().toLocaleString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
 
-  try {
-    const res = await fetch(params.webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: message }),
-    });
-    if (!res.ok) {
-      console.warn('[Teams webhook failed]', res.status, await res.text());
-    }
-  } catch (err) {
-    console.warn('[Teams webhook error]', err);
-  }
+  sendWebhook(
+    `💬 <b>AEGIS — New Mention in Comment</b><br><br>` +
+    `👤 <b>Mentioned:</b> ${mentionList}<br>` +
+    `✍️ <b>By:</b> <b>${params.commenterName}</b><br>` +
+    `🔍 <b>Finding:</b> ${params.findingTitle}<br>` +
+    `📋 <b>Project:</b> ${params.projectName}<br>` +
+    `🕐 <b>Time:</b> ${ts}<br><br>` +
+    `<i>"${preview}"</i>`
+  );
 }

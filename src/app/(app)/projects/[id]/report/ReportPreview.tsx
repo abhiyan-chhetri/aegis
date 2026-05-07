@@ -853,7 +853,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
       if (!reportElement) throw new Error('Report not found');
 
       const html = reportElement.innerHTML;
-      const css = (templateCSS ? extractCSS(templateCSS) : '') || DEFAULT_CSS;
+      const css = DEFAULT_CSS;
 
       // Wrap with full HTML document structure
       const fullHtml = `
@@ -924,7 +924,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
     }
   }
 
-  const css = (templateCSS ? extractCSS(templateCSS) : '') || DEFAULT_CSS;
+  const css = DEFAULT_CSS;
 
   // ── Posture ─────────────────────────────────────────────────────────────────
   const posture      = critHigh >= 3 ? 'Critical' : critHigh >= 1 ? 'Elevated' : totalFindings > 0 ? 'Moderate' : 'Low';
@@ -1626,132 +1626,115 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
 
           {/* Review Workflow */}
           {reportId && (
-            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line-1)' }}>
-              <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Review workflow</div>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--line-1)' }}>
+              <div className="eyebrow" style={{ fontSize: 9, marginBottom: 10 }}>Review workflow</div>
 
-              {/* Status pill */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>Status:</span>
-                <span style={{
-                  fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 600, padding: '2px 7px', borderRadius: 100,
-                  background: reportStatus === 'approved' ? 'rgba(143,201,122,0.12)' :
-                    reportStatus === 'rejected' ? 'rgba(255,92,58,0.12)' :
-                    reportStatus === 'in-review' ? 'rgba(127,179,213,0.12)' : 'var(--bg-3)',
-                  color: reportStatus === 'approved' ? 'var(--status-resolved)' :
-                    reportStatus === 'rejected' ? 'var(--sev-critical)' :
-                    reportStatus === 'in-review' ? 'var(--sev-low)' : 'var(--ink-2)',
-                  border: `1px solid ${reportStatus === 'approved' ? 'rgba(143,201,122,0.3)' :
-                    reportStatus === 'rejected' ? 'rgba(255,92,58,0.3)' :
-                    reportStatus === 'in-review' ? 'rgba(127,179,213,0.3)' : 'var(--line-2)'}`,
-                }}>
-                  {reportStatus}
+              {/* Status banner */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 6, marginBottom: 12,
+                background: reportStatus === 'approved' ? 'rgba(143,201,122,0.1)' :
+                  reportStatus === 'rejected' ? 'rgba(255,92,58,0.1)' :
+                  reportStatus === 'in-review' ? 'rgba(127,179,213,0.1)' : 'var(--bg-2)',
+                border: `1px solid ${reportStatus === 'approved' ? 'rgba(143,201,122,0.25)' :
+                  reportStatus === 'rejected' ? 'rgba(255,92,58,0.25)' :
+                  reportStatus === 'in-review' ? 'rgba(127,179,213,0.25)' : 'var(--line-1)'}`,
+              }}>
+                <span style={{ fontSize: 16 }}>
+                  {reportStatus === 'approved' ? '✅' : reportStatus === 'rejected' ? '❌' : reportStatus === 'in-review' ? '🔍' : '📝'}
                 </span>
+                <div>
+                  <div style={{
+                    fontSize: 11, fontWeight: 700,
+                    color: reportStatus === 'approved' ? 'var(--status-resolved)' :
+                      reportStatus === 'rejected' ? 'var(--sev-critical)' :
+                      reportStatus === 'in-review' ? 'var(--sev-low)' : 'var(--ink-1)',
+                    textTransform: 'capitalize',
+                  }}>
+                    {reportStatus === 'in-review' ? 'In Review' : reportStatus || 'Draft'}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 1 }}>
+                    {reportStatus === 'approved' && 'Report is final'}
+                    {reportStatus === 'rejected' && 'Needs revision'}
+                    {reportStatus === 'in-review' && (reviewerName ? `Assigned to ${reviewerName}` : 'Awaiting reviewer')}
+                    {(!reportStatus || reportStatus === 'draft') && 'Ready to submit'}
+                  </div>
+                </div>
               </div>
 
               {reviewError && (
-                <div style={{ fontSize: 11, color: 'var(--sev-critical)', marginBottom: 8 }}>{reviewError}</div>
+                <div style={{ fontSize: 11, color: 'var(--sev-critical)', marginBottom: 8, padding: '6px 8px', background: 'rgba(255,92,58,0.08)', borderRadius: 4, border: '1px solid rgba(255,92,58,0.2)' }}>
+                  ⚠️ {reviewError}
+                </div>
               )}
 
-              {/* Draft: submit for review */}
-              {(reportStatus === 'draft' || !reportStatus) && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {/* Draft or Rejected: submit for review */}
+              {(reportStatus === 'draft' || reportStatus === 'rejected' || !reportStatus) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 2 }}>
+                    {reportStatus === 'rejected' ? 'Revisions made? Resubmit for review:' : 'Assign a reviewer and submit:'}
+                  </div>
                   <select
                     className="input"
                     style={{ width: '100%', fontSize: 11 }}
                     value={selectedReviewerId}
                     onChange={e => setSelectedReviewerId(e.target.value)}
                   >
-                    <option value="">Assign reviewer…</option>
+                    <option value="">— Select reviewer —</option>
                     {allUsers.map(u => (
                       <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
                   </select>
                   <button
-                    className="btn btn-sm"
+                    className="btn btn-sm btn-primary"
                     style={{ width: '100%', justifyContent: 'center', fontSize: 11 }}
                     disabled={!selectedReviewerId || reviewSubmitting}
                     onClick={() => submitReview('submit')}
                   >
                     <Ico name="send" size={11} />
-                    {reviewSubmitting ? 'Submitting…' : 'Submit for review'}
+                    {reviewSubmitting ? 'Submitting…' : reportStatus === 'rejected' ? 'Resubmit for Review' : 'Submit for Review'}
                   </button>
                 </div>
               )}
 
               {/* In-review: approve or reject */}
               {reportStatus === 'in-review' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {reviewerName && (
-                    <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 2 }}>
-                      Awaiting review by <strong style={{ color: 'var(--ink-1)' }}>{reviewerName}</strong>
-                    </div>
-                  )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <button
                     className="btn btn-sm"
-                    style={{ width: '100%', justifyContent: 'center', fontSize: 11, background: 'rgba(143,201,122,0.12)', borderColor: 'rgba(143,201,122,0.3)', color: 'var(--status-resolved)' }}
+                    style={{ width: '100%', justifyContent: 'center', fontSize: 12, fontWeight: 600, padding: '8px 0',
+                      background: 'rgba(143,201,122,0.12)', borderColor: 'rgba(143,201,122,0.35)', color: 'var(--status-resolved)' }}
                     disabled={reviewSubmitting}
                     onClick={() => submitReview('approve')}
                   >
-                    <Ico name="check" size={11} />
-                    {reviewSubmitting ? 'Approving…' : 'Approve'}
+                    ✅ {reviewSubmitting ? 'Approving…' : 'Approve Report'}
                   </button>
-                  <textarea
-                    className="input"
-                    placeholder="Rejection comment (optional)…"
-                    value={rejectComment}
-                    onChange={e => setRejectComment(e.target.value)}
-                    rows={2}
-                    style={{ width: '100%', fontSize: 11, resize: 'none' }}
-                  />
+                  <div>
+                    <div style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 4 }}>Rejection reason (optional):</div>
+                    <textarea
+                      className="input"
+                      placeholder="Describe what needs to be fixed…"
+                      value={rejectComment}
+                      onChange={e => setRejectComment(e.target.value)}
+                      rows={2}
+                      style={{ width: '100%', fontSize: 11, resize: 'none', boxSizing: 'border-box' }}
+                    />
+                  </div>
                   <button
                     className="btn btn-sm"
-                    style={{ width: '100%', justifyContent: 'center', fontSize: 11, background: 'rgba(255,92,58,0.12)', borderColor: 'rgba(255,92,58,0.3)', color: 'var(--sev-critical)' }}
+                    style={{ width: '100%', justifyContent: 'center', fontSize: 12, fontWeight: 600, padding: '8px 0',
+                      background: 'rgba(255,92,58,0.1)', borderColor: 'rgba(255,92,58,0.3)', color: 'var(--sev-critical)' }}
                     disabled={reviewSubmitting}
                     onClick={() => submitReview('reject')}
                   >
-                    <Ico name="x" size={11} />
-                    {reviewSubmitting ? 'Rejecting…' : 'Reject'}
+                    ❌ {reviewSubmitting ? 'Rejecting…' : 'Reject Report'}
                   </button>
                 </div>
               )}
 
-              {/* Approved */}
+              {/* Approved final state */}
               {reportStatus === 'approved' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--status-resolved)' }}>
-                  <Ico name="check" size={14} style={{ color: 'var(--status-resolved)' }} />
-                  Approved
-                </div>
-              )}
-
-              {/* Rejected */}
-              {reportStatus === 'rejected' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--sev-critical)' }}>
-                    <Ico name="x" size={14} style={{ color: 'var(--sev-critical)' }} />
-                    Rejected
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                    <select
-                      className="input"
-                      style={{ width: '100%', fontSize: 11 }}
-                      value={selectedReviewerId}
-                      onChange={e => setSelectedReviewerId(e.target.value)}
-                    >
-                      <option value="">Assign reviewer…</option>
-                      {allUsers.map(u => (
-                        <option key={u.id} value={u.id}>{u.name}</option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn btn-sm"
-                      style={{ width: '100%', justifyContent: 'center', fontSize: 11 }}
-                      disabled={!selectedReviewerId || reviewSubmitting}
-                      onClick={() => submitReview('submit')}
-                    >
-                      <Ico name="send" size={11} />
-                      {reviewSubmitting ? 'Resubmitting…' : 'Resubmit for review'}
-                    </button>
-                  </div>
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', fontStyle: 'italic' }}>
+                  This report has been approved and is ready for delivery.
                 </div>
               )}
             </div>

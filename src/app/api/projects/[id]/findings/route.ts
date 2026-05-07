@@ -125,7 +125,20 @@ export async function POST(
     }
 
     // Fire webhook (fire and forget)
-    sendWebhook(`🔍 New <strong>${severity}</strong> finding added to <strong>${project.name}</strong>: <strong>${title}</strong>`);
+    const sevEmoji = severity === 'critical' ? '🔴' : severity === 'high' ? '🟠' : severity === 'medium' ? '🟡' : severity === 'low' ? '🟢' : 'ℹ️';
+    const ts = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    sendWebhook(
+      `${sevEmoji} <b>AEGIS — New Finding Added</b><br><br>` +
+      `🔍 <b>Finding:</b> [${finding.code}] ${title}<br>` +
+      `📋 <b>Project:</b> ${project.name}<br>` +
+      `⚠️ <b>Severity:</b> ${severity.charAt(0).toUpperCase() + severity.slice(1)}` +
+      (cvss > 0 ? ` (CVSS ${cvss})` : '') + `<br>` +
+      (cwe ? `🏷️ <b>CWE:</b> ${cwe}<br>` : ``) +
+      `👤 <b>Assigned to:</b> ${finding.assignee?.name || 'Unassigned'}<br>` +
+      `✍️ <b>Reported by:</b> ${session.name || 'Unknown'}<br>` +
+      `🕐 <b>Time:</b> ${ts}<br><br>` +
+      (summary ? `<i>${summary.substring(0, 200)}${summary.length > 200 ? '…' : ''}</i>` : `<i>No summary provided.</i>`)
+    );
 
     return NextResponse.json({ finding }, { status: 201 });
   } catch (error) {

@@ -809,6 +809,8 @@ function AITab() {
   const [region, setRegion] = useState('us-east-1');
   const [accessKeyId, setAccessKeyId] = useState('');
   const [secretKey, setSecretKey] = useState('');
+  const [bedrockApiKey, setBedrockApiKey] = useState('');
+  const [bedrockAuthMode, setBedrockAuthMode] = useState<'iam' | 'apikey'>('iam');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testMsg, setTestMsg] = useState('');
@@ -829,6 +831,8 @@ function AITab() {
       if (s.aiRegion) setRegion(getValue('aiRegion'));
       if (s.aiAccessKeyId) setAccessKeyId(getValue('aiAccessKeyId'));
       if (s.aiSecretAccessKey) setSecretKey(getValue('aiSecretAccessKey'));
+      if (s.aiBedrockApiKey) setBedrockApiKey(getValue('aiBedrockApiKey'));
+      if (s.aiBedrockAuthMode) setBedrockAuthMode(getValue('aiBedrockAuthMode') as 'iam' | 'apikey');
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []);
@@ -846,8 +850,13 @@ function AITab() {
       }
       if (provider === 'bedrock') {
         body.aiRegion = region;
-        body.aiAccessKeyId = accessKeyId;
-        body.aiSecretAccessKey = secretKey;
+        body.aiBedrockAuthMode = bedrockAuthMode;
+        if (bedrockAuthMode === 'apikey') {
+          body.aiBedrockApiKey = bedrockApiKey;
+        } else {
+          body.aiAccessKeyId = accessKeyId;
+          body.aiSecretAccessKey = secretKey;
+        }
       }
       const res = await fetch('/api/settings', {
         method: 'PATCH',
@@ -976,26 +985,45 @@ function AITab() {
 
           {provider === 'bedrock' && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-                <div className="form-group">
-                  <label className="form-label">AWS Region</label>
-                  <input className="input" style={{ width: '100%' }} placeholder="us-east-1" value={region} onChange={e => setRegion(e.target.value)} />
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label className="form-label">AWS Region</label>
+                <input className="input" style={{ width: '100%' }} placeholder="us-east-1" value={region} onChange={e => setRegion(e.target.value)} />
+              </div>
+              <div className="form-group" style={{ marginBottom: 14 }}>
+                <label className="form-label">Authentication Method</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {(['iam', 'apikey'] as const).map(mode => (
+                    <button key={mode} onClick={() => setBedrockAuthMode(mode)} className="btn" style={{
+                      background: bedrockAuthMode === mode ? 'var(--ink-0)' : 'var(--bg-2)',
+                      color: bedrockAuthMode === mode ? 'var(--bg-0)' : 'var(--ink-1)',
+                      borderColor: bedrockAuthMode === mode ? 'var(--ink-0)' : 'var(--line-2)',
+                    }}>
+                      {mode === 'iam' ? '🔑 IAM Credentials' : '🗝️ API Key'}
+                    </button>
+                  ))}
                 </div>
-                <div className="form-group">
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <label className="form-label" style={{ marginBottom: 0 }}>Credentials</label>
-                    <button onClick={() => setShowKeys(v => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--ink-3)' }}>{showKeys ? 'Hide' : 'Show'}</button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 8 }}>
+                <button onClick={() => setShowKeys(v => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--ink-3)' }}>{showKeys ? 'Hide keys' : 'Show keys'}</button>
+              </div>
+              {bedrockAuthMode === 'apikey' ? (
+                <div className="form-group" style={{ marginBottom: 14 }}>
+                  <label className="form-label">Bedrock API Key</label>
+                  <input className="input" style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} type={showKeys ? 'text' : 'password'} placeholder="Enter Bedrock API key…" value={bedrockApiKey} onChange={e => setBedrockApiKey(e.target.value)} />
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>API key auth — no IAM credentials required</div>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Access Key ID</label>
+                    <input className="input" style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} type={showKeys ? 'text' : 'password'} placeholder="AKIA…" value={accessKeyId} onChange={e => setAccessKeyId(e.target.value)} />
                   </div>
-                </div>
-              </div>
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label className="form-label">Access Key ID</label>
-                <input className="input" style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} type={showKeys ? 'text' : 'password'} placeholder="AKIA…" value={accessKeyId} onChange={e => setAccessKeyId(e.target.value)} />
-              </div>
-              <div className="form-group" style={{ marginBottom: 14 }}>
-                <label className="form-label">Secret Access Key</label>
-                <input className="input" style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} type={showKeys ? 'text' : 'password'} placeholder="••••••••" value={secretKey} onChange={e => setSecretKey(e.target.value)} />
-              </div>
+                  <div className="form-group" style={{ marginBottom: 14 }}>
+                    <label className="form-label">Secret Access Key</label>
+                    <input className="input" style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} type={showKeys ? 'text' : 'password'} placeholder="••••••••" value={secretKey} onChange={e => setSecretKey(e.target.value)} />
+                  </div>
+                </>
+              )}
             </>
           )}
 

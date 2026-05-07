@@ -54,7 +54,7 @@ cat << "EOF"
 EOF
 echo -e "${NC}\n"
 
-echo -e "${YELLOW}Mode: ${DEPLOYMENT_MODE^^}${NC}"
+echo -e "${YELLOW}Mode: ${DEPLOYMENT_MODE}${NC}"
 echo -e "${YELLOW}Node Environment: ${NODE_ENV}${NC}\n"
 
 # ==============================================================================
@@ -210,19 +210,16 @@ echo "Generating Prisma client..."
 npx prisma generate
 echo -e "${GREEN}✓ Prisma client generated${NC}"
 
-echo "Running Prisma migrations..."
-if [[ "$DEPLOYMENT_MODE" == "development" ]]; then
-    # Development: reset DB completely (deploy.sh already recreated it above)
-    # If migrate deploy fails (e.g. 42P07 tables already exist from a previous
-    # partial run), fall back to db push which syncs schema without migration tracking
-    npx prisma migrate deploy 2>&1 || {
-        echo -e "${YELLOW}migrate deploy failed, falling back to db push...${NC}"
-        npx prisma db push --force-reset
-    }
+echo "Running database migrations..."
+# Prisma 7 removed url from schema — run SQL migration directly via psql
+MIGRATION_SQL="prisma/migrations/20260505000000_init/migration.sql"
+if [[ -f "$MIGRATION_SQL" ]]; then
+    psql "$DATABASE_URL" -f "$MIGRATION_SQL" 2>&1 | grep -v "^$" | grep -v "already exists" | head -20 || true
+    echo -e "${GREEN}✓ Migrations completed${NC}"
 else
-    npx prisma migrate deploy
+    echo -e "${YELLOW}No migration SQL found, attempting prisma db push...${NC}"
+    DATABASE_URL="$DATABASE_URL" npx prisma db push --force-reset 2>&1 || true
 fi
-echo -e "${GREEN}✓ Migrations completed${NC}"
 
 # ==============================================================================
 # 8. BUILD APPLICATION

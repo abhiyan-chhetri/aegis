@@ -67,7 +67,13 @@ export async function POST(
         JSON.stringify({ status: 'in-review', assignedTo: reviewer?.name || reviewerId }), new Date().toISOString()
       );
 
-      webhookText = `📋 Report for <strong>${report.project.name}</strong> has been submitted for review by <strong>${report.author.name}</strong> and assigned to <strong>${reviewer?.name || reviewerId}</strong>`;
+      const ts = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      webhookText = `🛡️ <b>AEGIS — Report Submitted for Review</b><br><br>` +
+        `📋 <b>Project:</b> ${report.project.name}<br>` +
+        `✍️ <b>Author:</b> ${report.author.name}<br>` +
+        `👤 <b>Assigned Reviewer:</b> ${reviewer?.name || reviewerId}<br>` +
+        `🕐 <b>Submitted:</b> ${ts}<br><br>` +
+        `<i>Please review the report at your earliest convenience.</i>`;
 
     } else if (action === 'approve') {
       updatedReport = await db.report.update({
@@ -100,7 +106,13 @@ export async function POST(
         JSON.stringify({ status: 'approved', reviewedBy: reviewerName, comment: comment || '' }), new Date().toISOString()
       );
 
-      webhookText = `✅ Report for <strong>${report.project.name}</strong> has been <strong>approved</strong> by <strong>${reviewerName}</strong>`;
+      const ts2 = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      webhookText = `✅ <b>AEGIS — Report Approved &amp; Finalised</b><br><br>` +
+        `📋 <b>Project:</b> ${report.project.name}<br>` +
+        `✍️ <b>Author:</b> ${report.author.name}<br>` +
+        `✅ <b>Approved by:</b> ${reviewerName}<br>` +
+        `🕐 <b>Reviewed:</b> ${ts2}<br><br>` +
+        `<i>The report is now <b>final</b> and ready for delivery to the client.</i>`;
 
     } else if (action === 'reject') {
       updatedReport = await db.report.update({
@@ -132,8 +144,15 @@ export async function POST(
         JSON.stringify({ status: 'rejected', reviewedBy: rejectReviewerName, comment: comment || '' }), new Date().toISOString()
       );
 
-      const commentText = comment ? ` — <em>${comment}</em>` : '';
-      webhookText = `❌ Report for <strong>${report.project.name}</strong> has been <strong>rejected</strong> by <strong>${rejectReviewerName}</strong>${commentText}`;
+      const ts3 = new Date().toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const commentHtml = comment ? `<br>💬 <b>Reason:</b> <i>${comment}</i>` : '';
+      webhookText = `❌ <b>AEGIS — Report Rejected</b><br><br>` +
+        `📋 <b>Project:</b> ${report.project.name}<br>` +
+        `✍️ <b>Author:</b> ${report.author.name}<br>` +
+        `👤 <b>Rejected by:</b> ${rejectReviewerName}<br>` +
+        `🕐 <b>Reviewed:</b> ${ts3}` +
+        commentHtml + `<br><br>` +
+        `<i>The report has been sent back for revisions.</i>`;
     }
 
     // Record report version snapshot
