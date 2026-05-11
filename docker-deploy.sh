@@ -175,42 +175,16 @@ for i in $(seq 1 30); do
   sleep 3
 done
 
-# ── Create admin account ──────────────────────────────────────────────────────
+# ── Create admin account (hardcoded credentials) ─────────────────────────────
 banner "7. Creating admin account"
 
-# Hash password using bcrypt via node (running inside app container)
-HASHED_PASS=$(docker exec "$APP_CONTAINER" node -e "
-const crypto = require('crypto');
-// Simple SHA-256 fallback if bcrypt not available
-const pw = '${ADMIN_PASSWORD}';
-try {
-  const bcrypt = require('bcryptjs');
-  console.log(bcrypt.hashSync(pw, 12));
-} catch(e) {
-  // Use the app's auth module
-  const { createHash } = require('crypto');
-  console.log(createHash('sha256').update(pw).digest('hex'));
-}
-" 2>/dev/null) || HASHED_PASS=""
-
-if [[ -z "$HASHED_PASS" ]]; then
-  warn "Could not hash password via container, using direct DB insert with plain password"
-  warn "You may need to log in and change the password via the UI"
-  HASHED_PASS="$ADMIN_PASSWORD"
-fi
-
-# Check what password hashing the app uses
-APP_USES_BCRYPT=$(docker exec "$APP_CONTAINER" node -e \
-  "try{require('bcryptjs');console.log('yes')}catch{console.log('no')}" 2>/dev/null || echo "no")
-
-if [[ "$APP_USES_BCRYPT" == "yes" ]]; then
-  HASHED_PASS=$(docker exec "$APP_CONTAINER" node -e \
-    "const b=require('bcryptjs');console.log(b.hashSync('${ADMIN_PASSWORD}',12))" 2>/dev/null)
-fi
-
+# Hardcoded admin credentials (change password via Settings after login)
 ADMIN_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || date +%s%N | sha256sum | head -c 36)
-INITIALS=$(echo "$ADMIN_NAME" | awk '{for(i=1;i<=NF;i++) printf substr($i,1,1)}' | head -c 3 | tr '[:lower:]' '[:upper:]')
-NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
+ADMIN_EMAIL="admin@aegis.local"
+ADMIN_NAME="Admin"
+INITIALS="AD"
+# Pre-hashed password: bcryptjs.hashSync('admin123456', 12)
+HASHED_PASS='$2b$12$kkan6o1kWR8Jz6SG6j845eklaXV71QNwAsoEs8dwH8sNzxnOQjMB2'
 
 docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" << EOSQL
 INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt", "updatedAt")
@@ -225,12 +199,12 @@ VALUES (
   NOW(), NOW()
 )
 ON CONFLICT (email) DO UPDATE SET
-  name = EXCLUDED.name,
-  password = EXCLUDED.password,
+  name = '${ADMIN_NAME}',
+  password = '${HASHED_PASS}',
   role = 'admin',
   "updatedAt" = NOW();
 EOSQL
-success "Admin account created/updated"
+success "Admin account created: admin@aegis.local / admin123456"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 banner "🎉 Deployment Complete!"

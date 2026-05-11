@@ -225,43 +225,23 @@ echo -e "${GREEN}✓ Migrations completed${NC}"
 # ==============================================================================
 echo -e "\n${YELLOW}[8/9] Creating admin user...${NC}"
 
+# Hardcoded admin credentials (change password via Settings after login)
 ADMIN_ID=$(node -e "console.log(require('crypto').randomUUID())")
-ADMIN_NAME="${ADMIN_NAME:-Admin}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@aegis.local}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9!@#$%' | head -c 20)}"
-ADMIN_INITIALS=$(echo "$ADMIN_NAME" | awk '{for(i=1;i<=NF;i++) printf substr($i,1,1)}' | head -c 3 | tr '[:lower:]' '[:upper:]')
+ADMIN_NAME="Admin"
+ADMIN_EMAIL="admin@aegis.local"
+ADMIN_PASSWORD="admin123456"
+ADMIN_INITIALS="AD"
+# Pre-hashed password: bcryptjs.hashSync('admin123456', 12)
+HASHED_PASS='$2b$12$kkan6o1kWR8Jz6SG6j845eklaXV71QNwAsoEs8dwH8sNzxnOQjMB2'
 NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
-
-# Hash password with bcrypt via Node.js (safe from shell escaping)
-# Use NODE_PATH to ensure bcryptjs is found in node_modules
-HASHED_PASS=$(NODE_PATH="./node_modules:$NODE_PATH" node -e "
-const bcrypt = require('bcryptjs');
-const password = process.argv[1];
-try {
-  console.log(bcrypt.hashSync(password, 12));
-} catch(err) {
-  console.error('Error:', err.message);
-  process.exit(1);
-}
-" "$ADMIN_PASSWORD" 2>/dev/null) || {
-  echo -e "${RED}✗ Failed to hash password with bcryptjs${NC}"
-  echo -e "${YELLOW}Troubleshooting:${NC}"
-  echo -e "  1. Make sure npm install completed: check if node_modules/ exists"
-  echo -e "  2. Try: npm install"
-  exit 1
-}
-
-# Escape single quotes in admin name for SQL
-ADMIN_NAME_ESCAPED="${ADMIN_NAME//\'/\'\'}"
-ADMIN_EMAIL_ESCAPED="${ADMIN_EMAIL//\'/\'\'}"
 
 psql "$DATABASE_URL" << EOF 2>/dev/null
 INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt", "updatedAt")
 VALUES (
   '$ADMIN_ID',
-  '$ADMIN_NAME_ESCAPED',
+  '$ADMIN_NAME',
   '$ADMIN_INITIALS',
-  '$ADMIN_EMAIL_ESCAPED',
+  '$ADMIN_EMAIL',
   '$HASHED_PASS',
   'admin',
   'Security',
@@ -269,8 +249,8 @@ VALUES (
   '$NOW'
 )
 ON CONFLICT (email) DO UPDATE SET
-  name = EXCLUDED.name,
-  password = EXCLUDED.password,
+  name = '$ADMIN_NAME',
+  password = '$HASHED_PASS',
   role = 'admin',
   "updatedAt" = '$NOW';
 EOF
@@ -286,6 +266,7 @@ Generated: $(date)
 App URL    : http://localhost:3000
 Admin Email: $ADMIN_EMAIL
 Password   : $ADMIN_PASSWORD
+  (⚠ Change this in Settings after first login!)
 DB Host    : $DB_HOST:$DB_PORT
 DB Name    : $DB_NAME
 DB User    : $DB_USER
@@ -314,10 +295,10 @@ cat << "EOF"
 EOF
 echo -e "${NC}\n"
 
-echo -e "${BLUE}Admin Credentials:${NC}"
-echo -e "  Email:    $ADMIN_EMAIL"
-echo -e "  Password: $ADMIN_PASSWORD"
-echo -e "  ${YELLOW}(saved to $CREDS_FILE)${NC}"
+echo -e "${BLUE}Admin Credentials (hardcoded):${NC}"
+echo -e "  Email:    admin@aegis.local"
+echo -e "  Password: admin123456"
+echo -e "  ${YELLOW}Change this in Settings after login!${NC}"
 echo ""
 
 echo -e "${BLUE}Database Credentials:${NC}"
@@ -333,8 +314,8 @@ if [[ "$DEPLOYMENT_MODE" == "development" ]]; then
     echo ""
     echo -e "${BLUE}Login:${NC}"
     echo -e "  Open http://localhost:3000"
-    echo -e "  Email: $ADMIN_EMAIL"
-    echo -e "  Password: $ADMIN_PASSWORD"
+    echo -e "  Email:    admin@aegis.local"
+    echo -e "  Password: admin123456"
     echo ""
     echo -e "${BLUE}View Database:${NC}"
     echo -e "  ${YELLOW}npx prisma studio${NC}"
@@ -349,7 +330,7 @@ echo -e "  ${YELLOW}npx prisma studio${NC}     - View database UI"
 echo -e "  ${YELLOW}npx prisma migrate reset${NC} - Reset database (⚠️ loses data)"
 echo -e "  ${YELLOW}npm run build${NC}          - Build application"
 echo ""
-echo -e "${YELLOW}⚠  Save the credentials file ${CREDS_FILE} — the password won't be shown again${NC}"
+echo -e "${YELLOW}✓ All credentials saved to ${CREDS_FILE}${NC}"
 echo ""
 
 # Ask to start dev server
