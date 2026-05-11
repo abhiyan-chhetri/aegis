@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
+import { LivePresence } from '@/components/collab/LivePresence';
 import { FindingComments } from './FindingComments';
 import { ScreenshotAnnotator } from './ScreenshotAnnotator';
 
@@ -1053,6 +1054,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
           {/* Save */}
           <div style={{padding:'14px 18px',borderTop:'1px solid var(--line-1)',background:'var(--bg-1)',position:'sticky',bottom:0,marginTop:'auto'}}>
+            {isEditing && finding?.id && (
+              <div style={{marginBottom:10}}>
+                <LivePresence entity={`finding:${finding.id}`} />
+              </div>
+            )}
             <button
               className={`btn ${saved?'':'btn-primary'}`}
               onClick={handleSave} disabled={saving}

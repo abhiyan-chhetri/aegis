@@ -7,6 +7,8 @@ import { Ico } from '@/components/chrome/icons';
 import { Avatar } from '@/components/chrome/icons';
 import { Sev, StatusPill, SevCounts } from '@/components/ui/SevBadge';
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
+import { LiveNotes } from '@/components/collab/LiveNotes';
+import { LivePresence } from '@/components/collab/LivePresence';
 
 type ScopeRow = { asset: string; type: string; notes: string };
 
@@ -489,6 +491,7 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                 </button>
               ))}
               <div style={{ flex: 1 }} />
+              <LivePresence entity={`project:${project.id}`} />
               <div style={{ position: 'relative' }}>
                 <Ico name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)' }} />
                 <input className="input" placeholder="Search findings…" value={search}
@@ -791,7 +794,7 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
 
         {/* ── Notes tab ── */}
         {activeTab === 'Notes' && (
-          <NotesTab projectId={project.id} initialNotes={project.notes ?? ''} />
+          <LiveNotes projectId={project.id} initialNotes={project.notes ?? ''} />
         )}
 
       </div>
