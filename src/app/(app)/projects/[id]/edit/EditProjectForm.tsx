@@ -19,6 +19,8 @@ type Project = {
   endDate: string;
   leadId: string;
   lead: { id: string; name: string };
+  targetCode?: string;
+  engagementYear?: string;
 };
 
 type User = { id: string; name: string; email: string; role: string; team: string };
@@ -57,6 +59,8 @@ export function EditProjectForm({ project, users }: Props) {
   const [teamMembers, setTeamMembers] = useState<string[]>(() => {
     try { return JSON.parse(project.members || '[]'); } catch { return []; }
   });
+  const [targetCode, setTargetCode] = useState(project.targetCode || '');
+  const [engagementYear, setEngagementYear] = useState(project.engagementYear || '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -106,6 +110,8 @@ export function EditProjectForm({ project, users }: Props) {
           endDate,
           leadId,
           members: teamMembers,
+          targetCode: targetCode.trim(),
+          engagementYear: engagementYear.trim(),
         }),
       });
       if (!res.ok) {
@@ -172,6 +178,42 @@ export function EditProjectForm({ project, users }: Props) {
                 <option value="waiting-client">Waiting on Client</option>
                 <option value="completed">Completed</option>
               </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Engagement Tracking */}
+      <div className="card" style={{ padding: 'var(--card-pad)' }}>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>Engagement Tracking</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 14 }}>
+          Group yearly re-engagements for the same target using a shared Target Code.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <div className="form-group">
+            <label className="form-label">Target Code</label>
+            <input
+              className="input"
+              value={targetCode}
+              onChange={e => setTargetCode(e.target.value.toUpperCase())}
+              placeholder="e.g. WEBAPP-CORP"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              Shared across all engagements for this target
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Engagement Year</label>
+            <input
+              className="input"
+              value={engagementYear}
+              onChange={e => setEngagementYear(e.target.value)}
+              placeholder={String(new Date().getFullYear())}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              e.g. 2025 or "Q1 2025"
             </div>
           </div>
         </div>

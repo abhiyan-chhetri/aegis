@@ -19,6 +19,10 @@ export async function register() {
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "notes" TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "assetOwner" TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "assetOwners" TEXT NOT NULL DEFAULT '[]'`,
+      // Multi-engagement support: group related pentests under a target code
+      `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "targetCode" TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementYear" TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "previousEngagementId" TEXT DEFAULT NULL`,
     ];
 
     for (const sql of migrations) {

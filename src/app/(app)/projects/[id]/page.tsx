@@ -13,7 +13,7 @@ export default async function ProjectPage({params }: Props) {
   await connection();
   const { id } = await params;
 
-  const [project, allUsers, rawRows] = await Promise.all([
+  const [project, allUsers, rawRows, engRows] = await Promise.all([
     db.project.findUnique({
       where: { id },
       include: {
@@ -28,6 +28,9 @@ export default async function ProjectPage({params }: Props) {
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
       `SELECT "executiveSummary", methodology, "attackNarrative", members, COALESCE(notes, '') as notes FROM "Project" WHERE id = $1`, id
+    ),
+    db.$queryRawUnsafe<any[]>(
+      `SELECT COALESCE("targetCode",'') AS "targetCode", COALESCE("engagementYear",'') AS "engagementYear", "previousEngagementId" FROM "Project" WHERE id = $1`, id
     ),
   ]);
 
@@ -52,6 +55,36 @@ export default async function ProjectPage({params }: Props) {
   if (!project) notFound();
 
   const rawExtra = rawRows[0] ?? {};
+  const engExtra = engRows[0] ?? { targetCode: '', engagementYear: '', previousEngagementId: null };
+
+  // Fetch engagement siblings when targetCode is set
+  let engagementSiblings: any[] = [];
+  if (engExtra.targetCode) {
+    const siblings = await db.$queryRawUnsafe<any[]>(`
+      SELECT p.id, p.code, p.name, p.status,
+             COALESCE(p."engagementYear",'') AS "engagementYear",
+             p."startDate", p."endDate",
+             COUNT(f.id)::int AS "findingCount",
+             COUNT(CASE WHEN f.status = 'resolved' THEN 1 END)::int AS "resolvedCount"
+      FROM "Project" p
+      LEFT JOIN "Finding" f ON f."projectId" = p.id
+      WHERE p."targetCode" = $1
+      GROUP BY p.id, p.code, p.name, p.status, p."engagementYear", p."startDate", p."endDate"
+      ORDER BY COALESCE(p."engagementYear",'') DESC, p."startDate" DESC
+    `, engExtra.targetCode);
+    engagementSiblings = siblings.map((s: any) => ({ ...s, isCurrent: s.id === id }));
+  }
+
+  // Fetch carry-over findings from previous engagement (still unresolved)
+  let carryoverFindings: any[] = [];
+  if (engExtra.previousEngagementId) {
+    carryoverFindings = await db.$queryRawUnsafe<any[]>(`
+      SELECT id, code, title, severity, status FROM "Finding"
+      WHERE "projectId" = $1 AND status NOT IN ('resolved','accepted')
+      ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END
+    `, engExtra.previousEngagementId);
+  }
+
   const projectWithRaw = {
     ...project,
     executiveSummary: rawExtra.executiveSummary ?? '',
@@ -59,6 +92,9 @@ export default async function ProjectPage({params }: Props) {
     attackNarrative:  rawExtra.attackNarrative  ?? '',
     members:          rawExtra.members          ?? '[]',
     notes:            rawExtra.notes            ?? '',
+    targetCode:       engExtra.targetCode ?? '',
+    engagementYear:   engExtra.engagementYear ?? '',
+    previousEngagementId: engExtra.previousEngagementId ?? null,
   };
 
   const counts = {
@@ -111,6 +147,8 @@ export default async function ProjectPage({params }: Props) {
         counts={counts}
         scopeRows={scopeRows}
         allUsers={allUsers as any}
+        engagementSiblings={engagementSiblings}
+        carryoverFindings={carryoverFindings}
       />
     </div>
   );

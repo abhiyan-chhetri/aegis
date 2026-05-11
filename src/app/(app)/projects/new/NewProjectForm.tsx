@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
 
 type User = { id: string; name: string; role: string; team: string; email: string };
@@ -155,8 +155,15 @@ function AssetOwnerInput({
 
 export function NewProjectForm({ users, existingOwners }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [name, setName] = useState('');
+  // Pre-fill from re-engagement URL params
+  const preTargetCode = searchParams.get('targetCode') || '';
+  const prePrevEngId = searchParams.get('previousEngagementId') || '';
+  const preFromName = searchParams.get('from') || '';
+  const isReEngagement = !!(preTargetCode || prePrevEngId);
+
+  const [name, setName] = useState(preFromName ? `${preFromName} ${new Date().getFullYear()}` : '');
   const [code, setCode] = useState('');
   const [codeManual, setCodeManual] = useState(false);
   const [engagement, setEngagement] = useState('');
@@ -168,6 +175,10 @@ export function NewProjectForm({ users, existingOwners }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engagementTypes, setEngagementTypes] = useState<string[]>(DEFAULT_ENGAGEMENT_TYPES);
+  // Multi-engagement fields
+  const [targetCode, setTargetCode] = useState(preTargetCode);
+  const [engagementYear, setEngagementYear] = useState(String(new Date().getFullYear()));
+  const [previousEngagementId] = useState(prePrevEngId);
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
@@ -203,7 +214,7 @@ export function NewProjectForm({ users, existingOwners }: Props) {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners }),
+        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners, targetCode, engagementYear, previousEngagementId }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -219,6 +230,27 @@ export function NewProjectForm({ users, existingOwners }: Props) {
 
   return (
     <form onSubmit={handleSubmit} style={{ maxWidth: 680, width: '100%' }}>
+      {/* Re-engagement banner */}
+      {isReEngagement && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
+          borderRadius: 'var(--r-md)', padding: '12px 16px', marginBottom: 20,
+          color: 'var(--ink-1)', fontSize: 13, borderLeft: '3px solid var(--accent)',
+        }}>
+          <Ico name="paper" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+          <div>
+            <div style={{ fontWeight: 600, color: 'var(--ink-0)', marginBottom: 2 }}>
+              Re-engagement for <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{preTargetCode || preFromName}</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+              This will be linked to the previous engagement. Carry-over findings will be shown automatically.
+            </div>
+          </div>
+        </div>
+      )}
+
       {error && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10,
@@ -344,6 +376,43 @@ export function NewProjectForm({ users, existingOwners }: Props) {
             <option key={u.id} value={u.id}>{u.name} — {u.role}</option>
           ))}
         </select>
+      </div>
+
+      {/* Target Code + Engagement Year */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
+        <div className="form-group">
+          <label className="form-label" htmlFor="proj-targetCode">
+            Target Code
+            <span style={{ fontWeight: 400, color: 'var(--ink-3)', marginLeft: 6 }}>(optional)</span>
+          </label>
+          <input
+            id="proj-targetCode"
+            className="input"
+            type="text"
+            placeholder="e.g. WEBAPP-CORP"
+            value={targetCode}
+            onChange={e => setTargetCode(e.target.value.toUpperCase())}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, height: 38 }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            Group yearly engagements for the same target
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="proj-engYear">Engagement Year</label>
+          <input
+            id="proj-engYear"
+            className="input"
+            type="text"
+            placeholder={String(new Date().getFullYear())}
+            value={engagementYear}
+            onChange={e => setEngagementYear(e.target.value)}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, height: 38 }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+            e.g. 2025 or "Q1 2025"
+          </div>
+        </div>
       </div>
 
       {/* Asset Owners */}

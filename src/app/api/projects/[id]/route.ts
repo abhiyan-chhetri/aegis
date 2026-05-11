@@ -58,7 +58,63 @@ export async function GET(
 
     if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
 
-    return NextResponse.json({ project: { ...project, ...content } });
+    // Fetch engagement fields + siblings (other engagements with same targetCode)
+    const engagementRows = await db.$queryRawUnsafe<{
+      id: string; targetCode: string; engagementYear: string; previousEngagementId: string | null;
+    }[]>(
+      `SELECT id, COALESCE("targetCode",'') AS "targetCode", COALESCE("engagementYear",'') AS "engagementYear", "previousEngagementId" FROM "Project" WHERE id = $1`,
+      id
+    );
+    const engRow = engagementRows[0] ?? { id, targetCode: '', engagementYear: '', previousEngagementId: null };
+
+    let engagementSiblings: {
+      id: string; code: string; name: string; status: string; engagementYear: string;
+      startDate: string; endDate: string; findingCount: number; resolvedCount: number;
+    }[] = [];
+
+    if (engRow.targetCode) {
+      const siblings = await db.$queryRawUnsafe<any[]>(`
+        SELECT p.id, p.code, p.name, p.status,
+               COALESCE(p."engagementYear",'') AS "engagementYear",
+               p."startDate", p."endDate",
+               COUNT(f.id) AS "findingCount",
+               COUNT(CASE WHEN f.status = 'resolved' THEN 1 END) AS "resolvedCount"
+        FROM "Project" p
+        LEFT JOIN "Finding" f ON f."projectId" = p.id
+        WHERE p."targetCode" = $1
+        GROUP BY p.id, p.code, p.name, p.status, p."engagementYear", p."startDate", p."endDate"
+        ORDER BY COALESCE(p."engagementYear",'') DESC, p."startDate" DESC
+      `, engRow.targetCode);
+      engagementSiblings = siblings.map(s => ({
+        ...s,
+        findingCount: Number(s.findingCount),
+        resolvedCount: Number(s.resolvedCount),
+        isCurrent: s.id === id,
+      }));
+    }
+
+    // Previous engagement findings (carry-overs) when previousEngagementId is set
+    let carryoverFindings: {
+      id: string; code: string; title: string; severity: string; status: string;
+    }[] = [];
+    if (engRow.previousEngagementId) {
+      carryoverFindings = await db.$queryRawUnsafe<any[]>(`
+        SELECT id, code, title, severity, status FROM "Finding"
+        WHERE "projectId" = $1 AND status NOT IN ('resolved', 'accepted')
+        ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END
+      `, engRow.previousEngagementId);
+    }
+
+    return NextResponse.json({
+      project: {
+        ...project, ...content,
+        targetCode: engRow.targetCode,
+        engagementYear: engRow.engagementYear,
+        previousEngagementId: engRow.previousEngagementId,
+        engagementSiblings,
+        carryoverFindings,
+      }
+    });
   } catch (error) {
     console.error('[GET /api/projects/[id]]', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -81,6 +137,8 @@ export async function PATCH(
       // Content fields — handled via raw SQL
       executiveSummary, methodology, attackNarrative, members, assetOwners, notes,
       startDate, endDate, leadId,
+      // Engagement fields
+      targetCode, engagementYear,
     } = body;
 
     // ── Prisma-managed fields (in original schema, no risk) ───────────────────
@@ -109,6 +167,10 @@ export async function PATCH(
       rawUpdates.push({ col: 'members', val: Array.isArray(members) ? JSON.stringify(members) : String(members) });
     if (assetOwners !== undefined)
       rawUpdates.push({ col: 'assetOwners', val: Array.isArray(assetOwners) ? JSON.stringify(assetOwners) : String(assetOwners) });
+    if (targetCode !== undefined)
+      rawUpdates.push({ col: 'targetCode', val: String(targetCode) });
+    if (engagementYear !== undefined)
+      rawUpdates.push({ col: 'engagementYear', val: String(engagementYear) });
 
     // Run everything in parallel
     await Promise.all([

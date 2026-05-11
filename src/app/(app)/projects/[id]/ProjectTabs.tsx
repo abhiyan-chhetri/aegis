@@ -54,6 +54,20 @@ type Project = {
   members: string;
   notes: string;
   lead: { id: string; name: string; initials: string; role: string };
+  // Multi-engagement fields
+  targetCode?: string;
+  engagementYear?: string;
+  previousEngagementId?: string | null;
+};
+
+type EngagementSibling = {
+  id: string; code: string; name: string; status: string;
+  engagementYear: string; startDate: string; endDate: string;
+  findingCount: number; resolvedCount: number; isCurrent: boolean;
+};
+
+type CarryoverFinding = {
+  id: string; code: string; title: string; severity: string; status: string;
 };
 
 type Counts = Record<string, number>;
@@ -65,9 +79,11 @@ type Props = {
   counts: Counts;
   scopeRows: ScopeRow[];
   allUsers: Member[];
+  engagementSiblings?: EngagementSibling[];
+  carryoverFindings?: CarryoverFinding[];
 };
 
-const TABS = ['Overview', 'Findings', 'Asset Owners', 'Reports', 'Scope', 'Report Content', 'Notes'] as const;
+const TABS = ['Overview', 'Findings', 'Asset Owners', 'Reports', 'Scope', 'Report Content', 'Notes', 'Engagements'] as const;
 type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
@@ -345,7 +361,7 @@ function SummaryAIOverlay({ phase, findingCount }: { phase: AIPhase; findingCoun
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export function ProjectTabs({ project, findings, reports, counts, scopeRows, allUsers }: Props) {
+export function ProjectTabs({ project, findings, reports, counts, scopeRows, allUsers, engagementSiblings = [], carryoverFindings = [] }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('Findings');
   const [sevFilter, setSevFilter] = useState('all');
@@ -461,6 +477,9 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
             {tab}
             {tab === 'Findings' && (
               <span className="badge" style={{ marginLeft: 4 }}>{findings.length}</span>
+            )}
+            {tab === 'Engagements' && engagementSiblings.length > 1 && (
+              <span className="badge" style={{ marginLeft: 4 }}>{engagementSiblings.length}</span>
             )}
           </button>
         ))}
@@ -797,6 +816,15 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           <LiveNotes projectId={project.id} initialNotes={project.notes ?? ''} />
         )}
 
+        {/* ── ENGAGEMENTS TAB ── */}
+        {activeTab === 'Engagements' && (
+          <EngagementsTab
+            project={project}
+            engagementSiblings={engagementSiblings}
+            carryoverFindings={carryoverFindings}
+          />
+        )}
+
       </div>
     </div>
   );
@@ -859,6 +887,263 @@ function NotesTab({ projectId, initialNotes }: { projectId: string; initialNotes
           style={{ minHeight: 420, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.7 }}
         />
       </div>
+    </div>
+  );
+}
+
+// ── Engagements Tab ──────────────────────────────────────────────────────────
+
+const SEV_COLORS_ENG: Record<string, string> = {
+  critical: 'var(--sev-critical)', high: 'var(--sev-high)',
+  medium: 'var(--sev-medium)', low: 'var(--sev-low)', info: 'var(--sev-info)',
+};
+
+function EngagementsTab({
+  project, engagementSiblings, carryoverFindings,
+}: {
+  project: Project;
+  engagementSiblings: EngagementSibling[];
+  carryoverFindings: CarryoverFinding[];
+}) {
+  const router = useRouter();
+  const [creating, setCreating] = React.useState(false);
+
+  async function handleNewEngagement() {
+    setCreating(true);
+    // Navigate to new project form with pre-filled targetCode
+    const tc = project.targetCode || project.code;
+    router.push(`/projects/new?targetCode=${encodeURIComponent(tc)}&previousEngagementId=${project.id}&from=${encodeURIComponent(project.name)}`);
+  }
+
+  const hasSiblings = engagementSiblings.length > 0;
+  const prevEngId = project.previousEngagementId;
+  const prevSibling = engagementSiblings.find(s => s.id === prevEngId);
+
+  return (
+    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 4 }}>
+            {project.targetCode ? (
+              <>Engagement history for <span className="mono" style={{ fontSize: 13, color: 'var(--accent)' }}>{project.targetCode}</span></>
+            ) : 'Engagements'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+            {hasSiblings
+              ? `${engagementSiblings.length} engagement${engagementSiblings.length !== 1 ? 's' : ''} found for this target · set a Target Code to link engagements`
+              : 'Set a Target Code on this project to group related yearly engagements together.'}
+          </div>
+        </div>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={handleNewEngagement}
+          disabled={creating}
+          style={{ flexShrink: 0 }}
+        >
+          <Ico name="plus" size={13} />
+          {creating ? 'Opening…' : 'New re-engagement'}
+        </button>
+      </div>
+
+      {/* Engagement timeline */}
+      {hasSiblings ? (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)' }}>
+            <div className="eyebrow" style={{ marginBottom: 2 }}>Engagement Timeline</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>All pentests for this target · sorted newest first</div>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: 24 }}></th>
+                <th style={{ width: 100 }}>Code</th>
+                <th>Engagement</th>
+                <th style={{ width: 80 }}>Year</th>
+                <th style={{ width: 110 }}>Status</th>
+                <th style={{ width: 80, textAlign: 'center' }}>Findings</th>
+                <th style={{ width: 80, textAlign: 'center' }}>Resolved</th>
+                <th style={{ width: 90, textAlign: 'center' }}>Res. Rate</th>
+                <th style={{ width: 80 }}>Period</th>
+              </tr>
+            </thead>
+            <tbody>
+              {engagementSiblings.map((eng, idx) => {
+                const resRate = eng.findingCount > 0 ? Math.round((eng.resolvedCount / eng.findingCount) * 100) : 0;
+                return (
+                  <tr key={eng.id} style={{ background: eng.isCurrent ? 'color-mix(in srgb, var(--accent) 6%, transparent)' : undefined }}>
+                    <td style={{ paddingLeft: 18 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {/* Timeline dot + connector */}
+                        <div style={{ position: 'relative' }}>
+                          <div style={{
+                            width: 10, height: 10, borderRadius: '50%',
+                            background: eng.isCurrent ? 'var(--accent)' : 'var(--bg-3)',
+                            border: `2px solid ${eng.isCurrent ? 'var(--accent)' : 'var(--line-2)'}`,
+                          }} />
+                          {idx < engagementSiblings.length - 1 && (
+                            <div style={{
+                              position: 'absolute', left: '50%', top: '100%',
+                              width: 2, height: 24, transform: 'translateX(-50%)',
+                              background: 'var(--line-1)',
+                            }} />
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <Link href={`/projects/${eng.id}`} style={{ textDecoration: 'none' }}>
+                        <span className="mono" style={{ fontSize: 11, color: eng.isCurrent ? 'var(--accent)' : 'var(--ink-2)' }}>
+                          {eng.code}
+                        </span>
+                      </Link>
+                    </td>
+                    <td>
+                      <Link href={`/projects/${eng.id}`} style={{ textDecoration: 'none' }}>
+                        <span style={{ fontWeight: eng.isCurrent ? 600 : 400, color: 'var(--ink-0)', fontSize: 13 }}>
+                          {eng.name}
+                        </span>
+                      </Link>
+                      {eng.isCurrent && (
+                        <span style={{
+                          marginLeft: 8, fontSize: 9, fontFamily: 'var(--font-mono)',
+                          color: 'var(--accent)', background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+                          padding: '1px 6px', borderRadius: 100, textTransform: 'uppercase', letterSpacing: '0.06em',
+                        }}>current</span>
+                      )}
+                    </td>
+                    <td>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink-2)' }}>
+                        {eng.engagementYear || '—'}
+                      </span>
+                    </td>
+                    <td><StatusPill status={eng.status} /></td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--ink-1)' }}>
+                        {eng.findingCount}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: eng.resolvedCount > 0 ? 'var(--status-resolved)' : 'var(--ink-3)' }}>
+                        {eng.resolvedCount}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, color: resRate >= 70 ? 'var(--status-resolved)' : resRate >= 40 ? 'var(--sev-medium)' : 'var(--sev-high)' }}>
+                          {eng.findingCount > 0 ? `${resRate}%` : '—'}
+                        </span>
+                        {eng.findingCount > 0 && (
+                          <div style={{ width: 40, height: 3, background: 'var(--bg-3)', borderRadius: 100, overflow: 'hidden' }}>
+                            <div style={{ width: `${resRate}%`, height: '100%', background: resRate >= 70 ? 'var(--status-resolved)' : 'var(--sev-medium)', borderRadius: 100 }} />
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                        {eng.startDate} – {eng.endDate}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* No-engagement placeholder */
+        <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+          <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.3 }}>📅</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-2)', fontWeight: 500, marginBottom: 6 }}>
+            No linked engagements yet
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--ink-3)', maxWidth: 380, margin: '0 auto 16px' }}>
+            Set a <strong>Target Code</strong> when editing this project to group yearly engagements together.
+            Then use the "New re-engagement" button when you run the next annual pentest.
+          </div>
+          <Link href={`/projects/${project.id}/edit`} className="btn btn-ghost btn-sm">
+            <Ico name="settings" size={13} /> Edit project to set Target Code
+          </Link>
+        </div>
+      )}
+
+      {/* Carry-over findings from previous engagement */}
+      {carryoverFindings.length > 0 && (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div className="eyebrow" style={{ marginBottom: 2 }}>Carry-over from Previous Engagement</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                {carryoverFindings.length} finding{carryoverFindings.length !== 1 ? 's' : ''} from{' '}
+                {prevSibling ? (
+                  <Link href={`/projects/${prevEngId}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                    {prevSibling.code} ({prevSibling.engagementYear || prevSibling.startDate})
+                  </Link>
+                ) : 'previous engagement'}{' '}
+                still unresolved at time of this engagement
+              </div>
+            </div>
+            <span style={{
+              padding: '3px 10px', borderRadius: 100, fontSize: 11, fontWeight: 700,
+              fontFamily: 'var(--font-mono)', background: 'var(--sev-high-bg)',
+              color: 'var(--sev-high)', border: '1px solid color-mix(in srgb, var(--sev-high) 20%, transparent)',
+            }}>
+              {carryoverFindings.filter(f => f.severity === 'critical' || f.severity === 'high').length} crit/high
+            </span>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: 80 }}>Code</th>
+                <th>Title</th>
+                <th style={{ width: 110 }}>Severity</th>
+                <th style={{ width: 130 }}>Status in prev.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {carryoverFindings.map(f => (
+                <tr key={f.id}>
+                  <td><span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{f.code}</span></td>
+                  <td>
+                    <Link
+                      href={`/projects/${prevEngId}/findings/${f.id}`}
+                      style={{ color: 'var(--ink-0)', textDecoration: 'none', fontWeight: 500, fontSize: 13 }}
+                    >
+                      {f.title}
+                    </Link>
+                  </td>
+                  <td>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
+                      color: SEV_COLORS_ENG[f.severity] || 'var(--ink-2)',
+                      background: `color-mix(in srgb, ${SEV_COLORS_ENG[f.severity] || 'var(--ink-2)'} 10%, transparent)`,
+                      padding: '2px 8px', borderRadius: 100, textTransform: 'uppercase', letterSpacing: '0.06em',
+                    }}>{f.severity}</span>
+                  </td>
+                  <td><StatusPill status={f.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Setup guide when no targetCode */}
+      {!project.targetCode && (
+        <div style={{ padding: '16px 18px', background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 'var(--r-md)', borderLeft: '3px solid var(--accent)' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 6 }}>
+            How multi-engagement works
+          </div>
+          <ol style={{ fontSize: 12, color: 'var(--ink-2)', margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
+            <li>Edit this project and set a <strong>Target Code</strong> (e.g. <code>WEBAPP-CORP</code>) — all engagements for the same target share this code.</li>
+            <li>Use <strong>"New re-engagement"</strong> (above) to kick off next year's pentest — it auto-links to this project.</li>
+            <li>The new engagement shows <strong>carry-over findings</strong> — vulnerabilities from this year that weren't fixed.</li>
+            <li>Year-on-year <strong>remediation rate</strong> is tracked automatically in the timeline above.</li>
+          </ol>
+        </div>
+      )}
     </div>
   );
 }

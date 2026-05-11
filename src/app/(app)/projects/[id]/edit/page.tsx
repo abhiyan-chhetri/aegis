@@ -19,14 +19,19 @@ export default async function EditProjectPage({params }: Props) {
     }),
     db.user.findMany({ select: { id: true, name: true, email: true, role: true, team: true } }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT members FROM "Project" WHERE id = $1`, id
+      `SELECT members, COALESCE("targetCode",'') AS "targetCode", COALESCE("engagementYear",'') AS "engagementYear" FROM "Project" WHERE id = $1`, id
     ),
   ]);
 
   if (!project) notFound();
 
   const rawExtra = rawRows[0] ?? {};
-  const projectWithRaw = { ...project, members: rawExtra.members ?? '[]' };
+  const projectWithRaw = {
+    ...project,
+    members: rawExtra.members ?? '[]',
+    targetCode: rawExtra.targetCode ?? '',
+    engagementYear: rawExtra.engagementYear ?? '',
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>

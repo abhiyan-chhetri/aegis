@@ -36,6 +36,19 @@ export async function GET(_request: NextRequest) {
       },
     });
 
+    // Findings with assetOwner + project endDate for asset owner stats
+    const findingsForOwners = await db.$queryRawUnsafe<{
+      id: string; severity: string; status: string; projectId: string;
+      assetOwner: string; projectEndDate: string; projectAssetOwners: string;
+    }[]>(`
+      SELECT f.id, f.severity, f.status, f."projectId",
+             COALESCE(f."assetOwner", '') AS "assetOwner",
+             p."endDate" AS "projectEndDate",
+             COALESCE(p."assetOwners", '[]') AS "projectAssetOwners"
+      FROM "Finding" f
+      JOIN "Project" p ON p.id = f."projectId"
+    `);
+
     // ── Global severity + status distribution ─────────────────────────────────
     const severityCounts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
     const statusCounts: Record<string, number> = { open: 0, 'in-progress': 0, resolved: 0 };
@@ -231,6 +244,50 @@ export async function GET(_request: NextRequest) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
+    // ── Asset Owner stats ─────────────────────────────────────────────────────
+    // Attribution: finding.assetOwner if set, else project.assetOwners[0], else "Unattributed"
+    const today = new Date().toISOString().split('T')[0];
+    const ownerStats: Record<string, {
+      name: string; total: number; unresolved: number;
+      critHighOpen: number; overdue: number; projectIds: Set<string>;
+    }> = {};
+
+    function ensureOwner(name: string) {
+      if (!ownerStats[name]) {
+        ownerStats[name] = { name, total: 0, unresolved: 0, critHighOpen: 0, overdue: 0, projectIds: new Set() };
+      }
+    }
+
+    for (const f of findingsForOwners) {
+      // Determine which owner gets this finding
+      let ownerName = (f.assetOwner || '').trim();
+      if (!ownerName) {
+        // Fall back to first project asset owner
+        try {
+          const arr = JSON.parse(f.projectAssetOwners) as string[];
+          ownerName = arr[0]?.trim() || '';
+        } catch { ownerName = ''; }
+      }
+      if (!ownerName) ownerName = 'Unattributed';
+
+      ensureOwner(ownerName);
+      const o = ownerStats[ownerName];
+      o.total++;
+      o.projectIds.add(f.projectId);
+      const isUnresolved = f.status !== 'resolved' && f.status !== 'accepted';
+      if (isUnresolved) {
+        o.unresolved++;
+        const isCritHigh = f.severity === 'critical' || f.severity === 'high';
+        if (isCritHigh) o.critHighOpen++;
+        // Overdue: project end date passed and finding still open
+        if (f.projectEndDate && f.projectEndDate < today) o.overdue++;
+      }
+    }
+
+    const assetOwnerStats = Object.values(ownerStats)
+      .map(o => ({ ...o, projectCount: o.projectIds.size, projectIds: Array.from(o.projectIds) }))
+      .sort((a, b) => b.unresolved - a.unresolved || b.critHighOpen - a.critHighOpen);
+
     return NextResponse.json({
       summary: {
         totalProjects: projects.length,
@@ -254,6 +311,7 @@ export async function GET(_request: NextRequest) {
       teamWorkload,
       trends: trendRows,
       monthlyTrend,
+      assetOwnerStats,
     });
   } catch (error) {
     console.error('[GET /api/portfolio-dashboard]', error);

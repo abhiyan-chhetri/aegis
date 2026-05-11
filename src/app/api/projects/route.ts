@@ -58,7 +58,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, code, engagement, scope, members, assetOwners, startDate, endDate, leadId } = body;
+    const { name, code, engagement, scope, members, assetOwners, startDate, endDate, leadId,
+            targetCode, engagementYear, previousEngagementId } = body;
 
     if (!name || !code || !engagement || !startDate || !endDate || !leadId) {
       return NextResponse.json(
@@ -82,12 +83,16 @@ export async function POST(request: NextRequest) {
       include: { lead: true },
     });
 
-    // Set members and assetOwners via raw SQL
+    // Set members, assetOwners, and engagement fields via raw SQL
     const membersJson = Array.isArray(members) ? JSON.stringify(members) : (members ?? '[]');
     const assetOwnersJson = Array.isArray(assetOwners) ? JSON.stringify(assetOwners) : (assetOwners ?? '[]');
     await db.$executeRawUnsafe(
-      `UPDATE "Project" SET members = $1, "assetOwners" = $2 WHERE id = $3`,
-      membersJson, assetOwnersJson, project.id
+      `UPDATE "Project" SET members = $1, "assetOwners" = $2, "targetCode" = $3, "engagementYear" = $4, "previousEngagementId" = $5 WHERE id = $6`,
+      membersJson, assetOwnersJson,
+      targetCode || '',
+      engagementYear || '',
+      previousEngagementId || null,
+      project.id
     );
 
     // Log audit event

@@ -32,6 +32,15 @@ interface MonthlyPoint {
   resolved: number;
 }
 
+interface AssetOwnerStat {
+  name: string;
+  total: number;
+  unresolved: number;
+  critHighOpen: number;
+  overdue: number;
+  projectCount: number;
+}
+
 interface DashboardData {
   summary: {
     totalProjects: number;
@@ -54,6 +63,7 @@ interface DashboardData {
   projects: ProjectRow[];
   teamWorkload: WorkloadEntry[];
   monthlyTrend: MonthlyPoint[];
+  assetOwnerStats: AssetOwnerStat[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -270,7 +280,7 @@ export function PortfolioDashboard() {
 
   if (!data) return null;
 
-  const { summary, projects, teamWorkload, monthlyTrend } = data;
+  const { summary, projects, teamWorkload, monthlyTrend, assetOwnerStats = [] } = data;
   const dist = summary.severityDistribution;
   const statusDist = summary.statusDistribution;
   const totalF = summary.totalFindings || 1;
@@ -454,6 +464,111 @@ export function PortfolioDashboard() {
           )}
         </div>
       </div>
+
+      {/* ── Asset Owner Risk Table ── */}
+      {assetOwnerStats.length > 0 && (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)' }}>
+            <div className="eyebrow" style={{ marginBottom: 2 }}>Asset Owner Risk Dashboard</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              Unresolved findings grouped by asset owner · "Unattributed" = findings with no asset owner set
+            </div>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Asset Owner</th>
+                <th style={{ width: 90, textAlign: 'center' }}>Total</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Unresolved</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Crit / High</th>
+                <th style={{ width: 80, textAlign: 'center' }}>Overdue</th>
+                <th style={{ width: 90, textAlign: 'center' }}>Projects</th>
+                <th style={{ width: 140 }}>Exposure</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assetOwnerStats.map(owner => {
+                const isUnattributed = owner.name === 'Unattributed';
+                const exposurePct = owner.total > 0 ? (owner.unresolved / owner.total) * 100 : 0;
+                return (
+                  <tr key={owner.name}>
+                    <td>
+                      <span style={{
+                        fontWeight: 500, fontSize: 13,
+                        color: isUnattributed ? 'var(--ink-3)' : 'var(--ink-0)',
+                        fontStyle: isUnattributed ? 'italic' : 'normal',
+                      }}>
+                        {owner.name}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: 'var(--ink-1)' }}>
+                        {owner.total}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700,
+                        color: owner.unresolved > 0 ? 'var(--sev-medium)' : 'var(--status-resolved)',
+                      }}>
+                        {owner.unresolved}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {owner.critHighOpen > 0 ? (
+                        <span style={{
+                          fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                          color: 'var(--sev-critical)', background: 'var(--sev-critical-bg)',
+                          padding: '2px 8px', borderRadius: 100,
+                          border: '1px solid rgba(255,92,58,0.2)',
+                        }}>{owner.critHighOpen}</span>
+                      ) : (
+                        <span style={{ color: 'var(--status-resolved)', fontSize: 13 }}>✓</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {owner.overdue > 0 ? (
+                        <span style={{
+                          fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                          color: 'var(--sev-high)', background: 'var(--sev-high-bg)',
+                          padding: '2px 8px', borderRadius: 100,
+                        }}>{owner.overdue}</span>
+                      ) : (
+                        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink-2)' }}>
+                        {owner.projectCount}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', height: 4, borderRadius: 100, overflow: 'hidden', background: 'var(--bg-3)' }}>
+                          <div style={{
+                            width: `${exposurePct}%`, height: '100%',
+                            background: exposurePct > 70 ? 'var(--sev-high)' : exposurePct > 40 ? 'var(--sev-medium)' : 'var(--status-resolved)',
+                            borderRadius: 100,
+                          }} />
+                        </div>
+                        <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)' }}>
+                          {exposurePct.toFixed(0)}% exposed
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div style={{ padding: '10px 18px', borderTop: '1px solid var(--line-1)', background: 'var(--bg-0)' }}>
+            <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              <strong>Overdue</strong> = unresolved findings where the project end date has passed ·{' '}
+              <strong>Unattributed</strong> = no asset owner set on finding or project
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Project risk matrix ── */}
       <div className="card" style={{ overflow: 'hidden' }}>
