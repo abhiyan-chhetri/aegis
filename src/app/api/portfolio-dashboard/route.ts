@@ -17,17 +17,26 @@ export async function GET(_request: NextRequest) {
       orderBy: { createdAt: 'desc' },
     });
 
-    // All findings
-    const allFindings = await db.finding.findMany({
-      select: { severity: true, status: true, projectId: true, assigneeId: true },
-    });
-
     // All users for workload name resolution
     const allUsers = await db.user.findMany({ select: { id: true, name: true, initials: true } });
     const userMap: Record<string, { name: string; initials: string }> = {};
     for (const u of allUsers) userMap[u.id] = { name: u.name, initials: u.initials || u.name.slice(0, 2) };
 
-    // Global severity + status distribution
+    // All findings — full fields for MBR metrics
+    const allFindings = await db.finding.findMany({
+      select: {
+        id: true,
+        severity: true,
+        status: true,
+        projectId: true,
+        assigneeId: true,
+        cvss: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    // ── Global severity + status distribution ─────────────────────────────────
     const severityCounts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
     const statusCounts: Record<string, number> = { open: 0, 'in-progress': 0, resolved: 0 };
     const projectMetrics: Record<string, Record<string, number>> = {};
@@ -47,7 +56,110 @@ export async function GET(_request: NextRequest) {
       if (st in projectStatus[f.projectId]) projectStatus[f.projectId][st]++;
     }
 
-    // Per-project workload (resolved to user names)
+    // ── MBR metrics ───────────────────────────────────────────────────────────
+
+    // Resolution rate
+    const resolvedCount = allFindings.filter(f => f.status === 'resolved').length;
+    const resolutionRate = allFindings.length > 0
+      ? Math.round((resolvedCount / allFindings.length) * 100)
+      : 0;
+
+    // Average CVSS (only non-zero values)
+    const cvssFindings = allFindings.filter(f => (f.cvss ?? 0) > 0);
+    const avgCVSS = cvssFindings.length > 0
+      ? Math.round((cvssFindings.reduce((s, f) => s + (f.cvss ?? 0), 0) / cvssFindings.length) * 10) / 10
+      : 0;
+
+    // Mean time to resolve (days): createdAt → updatedAt for resolved findings
+    const resolvedFindings = allFindings.filter(f => f.status === 'resolved');
+    let avgDaysToResolve = 0;
+    if (resolvedFindings.length > 0) {
+      const totalMs = resolvedFindings.reduce((s, f) => {
+        const diff = (f.updatedAt as Date).getTime() - (f.createdAt as Date).getTime();
+        return s + Math.max(0, diff);
+      }, 0);
+      avgDaysToResolve = Math.round(totalMs / resolvedFindings.length / (1000 * 60 * 60 * 24));
+    }
+
+    // Crit/High open (unresolved)
+    const critHighOpen = allFindings.filter(
+      f => (f.severity === 'critical' || f.severity === 'high') && f.status !== 'resolved'
+    ).length;
+
+    // New findings this month
+    const firstOfMonth = new Date();
+    firstOfMonth.setDate(1);
+    firstOfMonth.setHours(0, 0, 0, 0);
+    const newFindingsThisMonth = allFindings.filter(
+      f => (f.createdAt as Date) >= firstOfMonth
+    ).length;
+
+    // Last month's findings for delta
+    const firstOfLastMonth = new Date(firstOfMonth);
+    firstOfLastMonth.setMonth(firstOfLastMonth.getMonth() - 1);
+    const newFindingsLastMonth = allFindings.filter(
+      f => (f.createdAt as Date) >= firstOfLastMonth && (f.createdAt as Date) < firstOfMonth
+    ).length;
+
+    // Report delivery rate — projects with at least 1 approved report
+    const approvedReports = await db.$queryRawUnsafe<{ projectId: string }[]>(
+      `SELECT DISTINCT "projectId" FROM "Report" WHERE status = 'approved'`
+    );
+    const deliveredProjectCount = approvedReports.length;
+    const reportDeliveryRate = projects.length > 0
+      ? Math.round((deliveredProjectCount / projects.length) * 100)
+      : 0;
+
+    // Project completion rate
+    const completedProjects = projects.filter((p: any) => p.status === 'completed').length;
+    const completionRate = projects.length > 0
+      ? Math.round((completedProjects / projects.length) * 100)
+      : 0;
+
+    // ── Monthly trend — last 6 months ─────────────────────────────────────────
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+    sixMonthsAgo.setDate(1);
+    sixMonthsAgo.setHours(0, 0, 0, 0);
+
+    const [monthlyNew, monthlyResolved] = await Promise.all([
+      db.$queryRawUnsafe<{ month: string; count: bigint }[]>(`
+        SELECT TO_CHAR("createdAt", 'YYYY-MM') AS month, COUNT(*) AS count
+        FROM "Finding"
+        WHERE "createdAt" >= $1
+        GROUP BY TO_CHAR("createdAt", 'YYYY-MM')
+        ORDER BY month ASC
+      `, sixMonthsAgo),
+      db.$queryRawUnsafe<{ month: string; count: bigint }[]>(`
+        SELECT TO_CHAR("updatedAt", 'YYYY-MM') AS month, COUNT(*) AS count
+        FROM "Finding"
+        WHERE status = 'resolved' AND "updatedAt" >= $1
+        GROUP BY TO_CHAR("updatedAt", 'YYYY-MM')
+        ORDER BY month ASC
+      `, sixMonthsAgo),
+    ]);
+
+    // Build full 6-month label list
+    const months: string[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+
+    const newMap: Record<string, number> = {};
+    for (const r of monthlyNew) newMap[r.month] = Number(r.count);
+    const resolvedMap: Record<string, number> = {};
+    for (const r of monthlyResolved) resolvedMap[r.month] = Number(r.count);
+
+    const monthlyTrend = months.map(m => ({
+      month: m,
+      label: new Date(m + '-01').toLocaleString('en-US', { month: 'short', year: '2-digit' }),
+      newFindings: newMap[m] || 0,
+      resolved: resolvedMap[m] || 0,
+    }));
+
+    // ── Per-project rows with snapshots ──────────────────────────────────────
     const projectRows = await Promise.all(projects.map(async (project: any) => {
       const assignedFindings = allFindings.filter(f => f.projectId === project.id && f.assigneeId);
       const workloadById: Record<string, number> = {};
@@ -79,6 +191,11 @@ export async function GET(_request: NextRequest) {
         );
       }
 
+      // Project-level resolution rate
+      const projTotal = project._count.findings;
+      const projResolved = s.resolved || 0;
+      const projResRate = projTotal > 0 ? Math.round((projResolved / projTotal) * 100) : 0;
+
       return {
         projectId: project.id,
         projectName: project.name,
@@ -92,6 +209,7 @@ export async function GET(_request: NextRequest) {
         metrics: m,
         statusBreakdown: s,
         workload,
+        resolutionRate: projResRate,
       };
     }));
 
@@ -116,13 +234,26 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json({
       summary: {
         totalProjects: projects.length,
+        activeProjects: projects.filter((p: any) => p.status === 'in-progress').length,
+        completedProjects,
+        completionRate,
         totalFindings: allFindings.length,
+        resolvedCount,
+        resolutionRate,
+        critHighOpen,
+        avgCVSS,
+        avgDaysToResolve,
+        newFindingsThisMonth,
+        newFindingsLastMonth,
+        reportDeliveryRate,
+        deliveredProjectCount,
         severityDistribution: severityCounts,
         statusDistribution: statusCounts,
       },
       projects: projectRows,
       teamWorkload,
       trends: trendRows,
+      monthlyTrend,
     });
   } catch (error) {
     console.error('[GET /api/portfolio-dashboard]', error);

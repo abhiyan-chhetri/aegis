@@ -25,7 +25,7 @@ export default async function ProjectPage({ params }: Props) {
       select: { id: true, name: true, initials: true, role: true, email: true },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT "executiveSummary", methodology, "attackNarrative", members FROM "Project" WHERE id = $1`, id
+      `SELECT "executiveSummary", methodology, "attackNarrative", members, COALESCE(notes, '') as notes FROM "Project" WHERE id = $1`, id
     ),
   ]);
 
@@ -56,6 +56,7 @@ export default async function ProjectPage({ params }: Props) {
     methodology:      rawExtra.methodology      ?? '',
     attackNarrative:  rawExtra.attackNarrative  ?? '',
     members:          rawExtra.members          ?? '[]',
+    notes:            rawExtra.notes            ?? '',
   };
 
   const counts = {

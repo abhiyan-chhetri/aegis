@@ -49,6 +49,7 @@ type Project = {
   methodology: string;
   attackNarrative: string;
   members: string;
+  notes: string;
   lead: { id: string; name: string; initials: string; role: string };
 };
 
@@ -63,7 +64,7 @@ type Props = {
   allUsers: Member[];
 };
 
-const TABS = ['Overview', 'Findings', 'Reports', 'Scope', 'Report Content'] as const;
+const TABS = ['Overview', 'Findings', 'Reports', 'Scope', 'Report Content', 'Notes'] as const;
 type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
@@ -782,6 +783,72 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           </div>
         )}
 
+        {/* ── Notes tab ── */}
+        {activeTab === 'Notes' && (
+          <NotesTab projectId={project.id} initialNotes={project.notes ?? ''} />
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ── Notes Tab Component ───────────────────────────────────────────────────────
+function NotesTab({ projectId, initialNotes }: { projectId: string; initialNotes: string }) {
+  const [notes, setNotes] = React.useState(initialNotes);
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleChange(val: string) {
+    setNotes(val);
+    setSaved(false);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => save(val), 1200);
+  }
+
+  async function save(val: string) {
+    setSaving(true);
+    try {
+      await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: val }),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: '24px 28px', maxWidth: 820, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Info banner */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-sm)', borderLeft: '3px solid var(--accent)' }}>
+        <Ico name="info" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+          Notes are <strong>private to the team</strong> and are sent to AI when generating findings or summaries. Use this for tester observations, recon notes, client context, or anything that helps the AI produce better output.
+        </span>
+      </div>
+
+      <div className="card" style={{ padding: 'var(--card-pad)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div className="eyebrow" style={{ marginBottom: 2 }}>Engagement Notes</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Markdown supported · Auto-saved</div>
+          </div>
+          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: saved ? 'var(--status-resolved)' : saving ? 'var(--ink-3)' : 'var(--ink-4)' }}>
+            {saved ? '✓ Saved' : saving ? 'Saving…' : `${notes.length} chars`}
+          </div>
+        </div>
+        <textarea
+          className="input thin-scroll"
+          value={notes}
+          onChange={e => handleChange(e.target.value)}
+          placeholder={`# Engagement Notes\n\n## Recon Findings\n- Target runs nginx 1.18 with default error pages\n- S3 bucket enumerated: dev-backups.target.com (public)\n\n## Client Context\n- Pentest scope agreed 2026-04-10\n- Out of scope: payment gateway (third-party)\n\n## Tester Observations\n- Auth bypass via role parameter manipulation on /admin\n- API keys found in JS bundle at /static/main.js\n\n## Notes for AI\n- Focus finding descriptions on business impact\n- Client is a fintech — emphasise PCI-DSS implications`}
+          style={{ minHeight: 420, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.7 }}
+        />
       </div>
     </div>
   );

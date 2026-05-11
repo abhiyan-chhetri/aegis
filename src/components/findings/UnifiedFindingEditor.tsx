@@ -609,7 +609,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         });
         if(!res.ok){ const d=await res.json().catch(()=>({})); setError(d.error||'Failed to create finding'); return; }
         const data=await res.json();
-        router.push(`/projects/${projectId}/findings/${data.id}`);
+        router.push(`/projects/${projectId}/findings/${data.finding?.id ?? data.id}`);
       }
     } catch { setError('Network error'); }
     finally { setSaving(false); }

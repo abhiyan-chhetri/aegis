@@ -6,8 +6,8 @@ import { Logo } from '@/components/chrome/icons';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('kenji@aegis.internal');
-  const [password, setPassword] = useState('aegis123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -86,7 +86,7 @@ export default function LoginPage() {
               <input
                 className="input" type="email" value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="you@aegis.internal" required
+                placeholder="you@company.com" required autoComplete="email"
                 style={{ width: '100%' }}
               />
             </div>
@@ -96,7 +96,7 @@ export default function LoginPage() {
               <input
                 className="input" type="password" value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••" required
+                placeholder="••••••••" required autoComplete="current-password"
                 style={{ width: '100%' }}
               />
             </div>
@@ -111,44 +111,8 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Demo accounts */}
-        <div style={{ marginTop: 20, padding: 16, background: 'var(--bg-1)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)' }}>
-          <div className="eyebrow" style={{ fontSize: 9, marginBottom: 10 }}>Demo accounts</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {[
-              { email: 'kenji@aegis.internal', name: 'Kenji Oduya', role: 'Lead Security Engineer' },
-              { email: 'rami@aegis.internal', name: 'Rami Moreau', role: 'Senior Pentester' },
-              { email: 'sofia@aegis.internal', name: 'Sofia Johansson', role: 'Cloud Security Engineer' },
-            ].map(u => (
-              <button
-                key={u.email}
-                onClick={() => { setEmail(u.email); setPassword('aegis123'); }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 10px', background: 'var(--bg-2)', border: '1px solid var(--line-1)',
-                  borderRadius: 'var(--r-sm)', cursor: 'pointer', textAlign: 'left',
-                  transition: 'background 0.1s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-2)')}
-              >
-                <div style={{
-                  width: 28, height: 28, borderRadius: '50%', background: 'var(--bg-4)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-1)',
-                }}>
-                  {u.name.split(' ').map(n => n[0]).join('')}
-                </div>
-                <div>
-                  <div style={{ fontSize: 12.5, color: 'var(--ink-0)', fontWeight: 500 }}>{u.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{u.role}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-          <div style={{ marginTop: 10, fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
-            Password for all: <span style={{ color: 'var(--ink-2)' }}>aegis123</span>
-          </div>
+        <div style={{ marginTop: 16, textAlign: 'center', fontSize: 11, color: 'var(--ink-4)' }}>
+          🛡️ Aegis — Internal Security Operations Platform
         </div>
       </div>
     </div>

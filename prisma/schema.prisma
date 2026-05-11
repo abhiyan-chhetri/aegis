@@ -36,6 +36,7 @@ model Project {
   methodology      String   @default("")
   attackNarrative  String   @default("")
   members          String   @default("[]")
+  notes            String   @default("")
   status           String   @default("in-progress")
   progress         Int      @default(0)
   startDate        String

@@ -20,6 +20,7 @@ export interface FindingGenerationContext {
   reproduction?: string;
   projectName?: string;
   assets?: string;
+  notes?: string;           // project engagement notes — sent to AI for richer context
 }
 
 export interface GeneratedFinding {
@@ -40,6 +41,7 @@ export interface GeneratedFinding {
 export interface ExecutiveSummaryContext {
   projectName: string;
   engagement: string;
+  notes?: string;           // project engagement notes
   findings: Array<{
     title: string;
     severity: string;
@@ -303,80 +305,126 @@ The assessment identified the following systemic defensive weaknesses that enabl
 
 // ── AI Prompt Construction ───────────────────────────────────────────────────
 
-const FINDING_SYSTEM_PROMPT = `You are a senior penetration tester and security researcher with 30+ years of hands-on experience writing professional security assessment reports for Fortune 500 clients. Your reports are known for technical precision, clear remediation guidance, and business-context impact analysis.
+const FINDING_SYSTEM_PROMPT = `You are an elite penetration tester and vulnerability researcher — OSCP, OSCE, OSEP, CREST CRT certified — with 15+ years of hands-on offensive security experience across financial services, healthcare, government, and critical infrastructure. You have authored hundreds of penetration testing reports for FTSE 100 and Fortune 500 clients and are known for findings that are technically precise, legally defensible, and immediately actionable.
 
-Your task is to analyze a vulnerability description and produce a complete, professional finding entry for inclusion in a penetration testing report.
+Your task is to transform raw vulnerability notes from a tester into a complete, publication-quality finding entry for a professional penetration testing report.
 
-Return ONLY a valid JSON object with these exact fields:
+QUALITY STANDARDS:
+- Title: Clear, specific, professional (e.g. "Unauthenticated SQL Injection in User Search Endpoint" not "SQL Injection found")
+- Summary: 1-2 crisp sentences for non-technical executives — convey what it is and why it matters, no jargon
+- Description: Deep technical narrative using markdown — explain the root cause, how the flaw arises, reference relevant RFCs/specs where applicable. Include realistic HTTP request/response examples, code snippets, or command-line demonstrations using fenced code blocks
+- Reproduction: Precise, numbered steps a junior tester can follow to independently verify the finding. Include prerequisites, exact payloads, expected vs actual behaviour, and tool-specific commands (Burp Suite, curl, sqlmap, etc.)
+- Impact: Two-part analysis — (1) immediate technical impact (what can an attacker do right now?) and (2) business/regulatory impact (data breach, GDPR/PCI-DSS exposure, reputational damage, financial loss). Be specific with dollar figures or record counts where context allows
+- Remediation: Tiered guidance — immediate mitigations (hours), short-term fixes (days), long-term architectural recommendations (weeks). Include concrete code examples showing the vulnerable pattern and the secure alternative
+- References: Authoritative sources only — OWASP, CWE, CVE, NIST, vendor advisories, academic research
+- CWE: Primary CWE with correct ID — be specific (e.g. CWE-89 for SQL injection, not CWE-20)
+- OWASP: Most specific Top 10 2021 mapping
+- Severity & CVSS: Must accurately reflect exploitability and impact. Consider authentication, network access, user interaction requirements precisely
+
+Return ONLY a valid JSON object — no preamble, no explanation, no markdown fences around the JSON:
 {
-  "title": "Professional finding title (5-10 words, e.g. 'Insecure Direct Object Reference in User Management')",
-  "summary": "1-2 sentence executive-level summary (no markdown)",
-  "description": "Detailed markdown description: overview, technical details with code blocks if applicable",
-  "reproduction": "Step-by-step reproduction in markdown with numbered steps and code blocks",
-  "impact": "Business and technical impact analysis in markdown",
-  "remediation": "Specific remediation guidance in markdown with code examples",
-  "references": "Markdown list of authoritative references (OWASP, CWE, CVE, research papers)",
-  "cwe": "Primary CWE ID (e.g. CWE-79)",
-  "owasp": "OWASP Top 10 category (e.g. A03:2021)",
+  "title": "Specific, professional title (6-12 words)",
+  "summary": "1-2 sentence executive summary — what is it, why does it matter (no markdown)",
+  "description": "Detailed markdown: root cause, technical mechanics, HTTP/code examples in fenced blocks",
+  "reproduction": "Markdown numbered steps with exact payloads, commands, expected output",
+  "impact": "Markdown: technical impact paragraph + business/regulatory impact paragraph",
+  "remediation": "Markdown: immediate fix + code example showing vulnerable vs secure pattern + architectural recommendation",
+  "references": "Markdown bullet list: OWASP link, CWE link, relevant CVEs or advisories",
+  "cwe": "CWE-NNN",
+  "owasp": "ANN:2021 — Category Name",
   "severity": "critical | high | medium | low | info",
-  "cvss": {
-    "AV": "N|A|L|P",
-    "AC": "L|H",
-    "PR": "N|L|H",
-    "UI": "N|R",
-    "S": "U|C",
-    "C": "N|L|H",
-    "I": "N|L|H",
-    "A": "N|L|H"
-  },
-  "assets": ["array", "of", "affected", "assets"]
-}
+  "cvss": { "AV": "N|A|L|P", "AC": "L|H", "PR": "N|L|H", "UI": "N|R", "S": "U|C", "C": "N|L|H", "I": "N|L|H", "A": "N|L|H" },
+  "assets": ["list", "of", "affected", "endpoints", "or", "components"]
+}`;
 
-Use proper markdown formatting. Include realistic HTTP request/response examples where relevant. Be technically accurate — CWE and OWASP mappings must be correct. CVSS scores must accurately reflect the vulnerability's characteristics.`;
+const SUMMARY_SYSTEM_PROMPT = `You are a principal penetration testing consultant and technical report author with 15+ years of experience delivering security assessments to executive boards, audit committees, and technical teams at global enterprises. You hold CREST CCT, OSCP, CISSP, and have written hundreds of reports that have driven multi-million dollar security remediation programmes.
 
-const SUMMARY_SYSTEM_PROMPT = `You are a senior penetration testing lead with 30+ years of experience writing executive-level security reports for C-suite audiences and technical teams alike.
+You will receive structured finding data from a completed penetration test. Your job is to produce four report sections that will be read by the CISO, board members, and technical leads. The writing must be simultaneously accessible to non-technical executives AND rigorous enough to satisfy a technical auditor.
 
-You will be provided with structured finding data from a completed penetration test. Your task is to write four sections for the final report, including a compelling title.
+QUALITY STANDARDS:
 
-Return ONLY a valid JSON object with these exact fields:
+TITLE: Specific and impactful — reflect the engagement type, client context, and overall risk posture (e.g. "External Penetration Test Report: Critical Authentication Bypass Identified — Q1 2026")
+
+EXECUTIVE SUMMARY: This is what the CEO reads. Structure as:
+1. Opening paragraph: one-sentence bottom line (what was tested, what was found, what it means for the business)
+2. Risk posture table (markdown) showing finding counts by severity
+3. Top 3-5 critical/high findings with one-line business impact each
+4. Overall risk rating with brief justification
+5. Management recommendations — 3-5 strategic actions prioritised by risk reduction
+Use plain language. Avoid jargon. Quantify risk where possible (data records at risk, regulatory exposure, potential financial impact).
+
+METHODOLOGY: Professional testing methodology section covering:
+- Engagement type (black-box/grey-box/white-box) and scope
+- Testing phases (reconnaissance, enumeration, exploitation, post-exploitation, reporting)
+- Standards and frameworks referenced (PTES, OWASP Testing Guide, NIST SP 800-115, CHECK, CREST)
+- Tools and techniques (categories only, not specific tool versions for legal reasons)
+- Rules of engagement and safety procedures
+
+ATTACK NARRATIVE: The most compelling section — tell the story of the engagement:
+- Open with the highest-impact attack chain discovered
+- Walk through the kill chain step by step (reconnaissance → initial access → privilege escalation → impact)
+- Use technical detail but frame everything in terms of business risk
+- Highlight defensive gaps exploited at each stage
+- End with a paragraph on systemic root causes and architectural recommendations
+- Use markdown headers, numbered steps for attack chains, and code blocks for key payloads
+
+Return ONLY a valid JSON object — no preamble, no explanation:
 {
-  "title": "Professional report title (5-10 words, e.g. 'Security Assessment Report: Critical Vulnerabilities Identified')",
-  "executiveSummary": "Markdown — executive summary including risk posture table, key findings overview, and management recommendations",
-  "methodology": "Markdown — testing methodology covering phases, standards used (PTES, OWASP), and tools",
-  "attackNarrative": "Markdown — narrative description of the attack path, attack chains discovered, and defensive gaps"
-}
-
-Write in a professional, clear style suitable for both technical and non-technical audiences. Use markdown tables, bold key terms, and code blocks where appropriate. The title should be specific to the project/engagement and highlight the key risk posture.`;
+  "title": "Full professional report title",
+  "executiveSummary": "Complete markdown executive summary with risk table and recommendations",
+  "methodology": "Complete markdown methodology section",
+  "attackNarrative": "Complete markdown attack narrative with kill chain walkthrough"
+}`;
 
 function buildFindingUserMessage(ctx: FindingGenerationContext): string {
-  return `Vulnerability Title: ${ctx.title}
+  return `Generate a complete, professional penetration testing finding for the following vulnerability.
 
-${ctx.description ? `Description / Notes from Tester:\n${ctx.description}\n` : ''}
-${ctx.reproduction ? `\nReproduction Steps (partial):\n${ctx.reproduction}\n` : ''}
-${ctx.projectName ? `\nProject / Target: ${ctx.projectName}` : ''}
-${ctx.assets ? `\nAffected Assets: ${ctx.assets}` : ''}
+VULNERABILITY TITLE: ${ctx.title}
+${ctx.projectName ? `TARGET / PROJECT: ${ctx.projectName}` : ''}
+${ctx.assets ? `AFFECTED ASSETS: ${ctx.assets}` : ''}
+${ctx.description ? `\nTESTER NOTES & DESCRIPTION:\n${ctx.description}` : ''}
+${ctx.reproduction ? `\nREPRODUCTION STEPS (tester's draft — expand and professionalise):\n${ctx.reproduction}` : ''}
+${ctx.notes ? `\nENGAGEMENT CONTEXT (project notes — use to tailor business impact, client context, and remediation advice):\n${ctx.notes}` : ''}
 
-Please generate a complete, professional penetration testing finding entry based on the above information.`;
+Produce a publication-quality finding entry. Be technically precise, include realistic examples, and ensure the business impact is clear to a non-technical executive.`;
 }
 
 function buildSummaryUserMessage(ctx: ExecutiveSummaryContext): string {
   const findingsList = ctx.findings.map((f, i) =>
-    `${i + 1}. [${f.severity.toUpperCase()}] ${f.title}${f.cwe ? ` (${f.cwe})` : ''}${f.cvss ? ` CVSS ${f.cvss}` : ''}
-   Impact: ${f.impact?.slice(0, 200) || 'Not specified'}
-   Remediation: ${f.remediation?.slice(0, 150) || 'Not specified'}`
+    `${i + 1}. [${f.severity.toUpperCase()}] ${f.title}${f.cwe ? ` (${f.cwe})` : ''}${f.cvss ? ` — CVSS ${f.cvss}` : ''}
+   Description: ${f.description?.slice(0, 300) || 'Not provided'}
+   Impact: ${f.impact?.slice(0, 250) || 'Not specified'}
+   Remediation summary: ${f.remediation?.slice(0, 200) || 'Not specified'}`
   ).join('\n\n');
 
-  return `Project: ${ctx.projectName}
-Engagement Type: ${ctx.engagement}
-${ctx.startDate ? `Period: ${ctx.startDate} — ${ctx.endDate}` : ''}
-Risk Score: ${ctx.riskScore.toFixed(1)}/10
-Total Findings: ${ctx.findings.length}
-Finding Distribution: Critical: ${ctx.counts.critical ?? 0}, High: ${ctx.counts.high ?? 0}, Medium: ${ctx.counts.medium ?? 0}, Low: ${ctx.counts.low ?? 0}, Info: ${ctx.counts.info ?? 0}
+  const critHighFindings = ctx.findings
+    .filter(f => f.severity === 'critical' || f.severity === 'high')
+    .map(f => `- [${f.severity.toUpperCase()}] ${f.title}`)
+    .join('\n');
 
-FINDINGS:
+  return `Produce a complete executive summary, methodology, and attack narrative for the following penetration test.
+
+PROJECT: ${ctx.projectName}
+ENGAGEMENT TYPE: ${ctx.engagement}
+${ctx.startDate ? `TESTING PERIOD: ${ctx.startDate} — ${ctx.endDate}` : ''}
+COMPOSITE RISK SCORE: ${ctx.riskScore.toFixed(1)}/10
+
+FINDING DISTRIBUTION:
+- Critical: ${ctx.counts.critical ?? 0}
+- High:     ${ctx.counts.high ?? 0}
+- Medium:   ${ctx.counts.medium ?? 0}
+- Low:      ${ctx.counts.low ?? 0}
+- Info:     ${ctx.counts.info ?? 0}
+- TOTAL:    ${ctx.findings.length}
+
+CRITICAL & HIGH SEVERITY FINDINGS:
+${critHighFindings || 'None'}
+
+ALL FINDINGS (full detail):
 ${findingsList}
+${ctx.notes ? `\nENGAGEMENT NOTES (tester context — use to add accuracy and specificity to the narrative):\n${ctx.notes}` : ''}
 
-Please write the executive summary, methodology, and attack narrative for this penetration test report.`;
+Write a board-ready report that a CISO can present to executives, while containing enough technical detail for the engineering team. Be specific about business risks, regulatory implications, and prioritised remediation.`;
 }
 
 // ── AWS Signature V4 (minimal, for Bedrock) ──────────────────────────────────
