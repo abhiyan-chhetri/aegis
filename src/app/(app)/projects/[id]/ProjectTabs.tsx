@@ -17,6 +17,7 @@ type Finding = {
   severity: string;
   status: string;
   cvss: number;
+  assetOwner: string;
   assignee: { name: string; initials: string } | null;
   discovered: string;
 };
@@ -64,7 +65,7 @@ type Props = {
   allUsers: Member[];
 };
 
-const TABS = ['Overview', 'Findings', 'Reports', 'Scope', 'Report Content', 'Notes'] as const;
+const TABS = ['Overview', 'Findings', 'Asset Owners', 'Reports', 'Scope', 'Report Content', 'Notes'] as const;
 type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
@@ -783,6 +784,11 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           </div>
         )}
 
+        {/* ── ASSET OWNERS TAB ── */}
+        {activeTab === 'Asset Owners' && (
+          <AssetOwnerTab findings={findings} projectId={project.id} />
+        )}
+
         {/* ── Notes tab ── */}
         {activeTab === 'Notes' && (
           <NotesTab projectId={project.id} initialNotes={project.notes ?? ''} />
@@ -850,6 +856,280 @@ function NotesTab({ projectId, initialNotes }: { projectId: string; initialNotes
           style={{ minHeight: 420, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.7 }}
         />
       </div>
+    </div>
+  );
+}
+
+// ── Asset Owner Tab ───────────────────────────────────────────────────────────
+
+const SEV_COLORS: Record<string, string> = {
+  critical: 'var(--sev-critical)',
+  high:     'var(--sev-high)',
+  medium:   'var(--sev-medium)',
+  low:      'var(--sev-low)',
+  info:     'var(--sev-info)',
+};
+const SEV_KEYS = ['critical', 'high', 'medium', 'low', 'info'] as const;
+
+function riskScore(sev: Record<string, number>, total: number): number {
+  if (total === 0) return 0;
+  const w = (sev.critical || 0) * 10 + (sev.high || 0) * 7 + (sev.medium || 0) * 4 + (sev.low || 0) * 1;
+  return Math.min(10, w / Math.max(total, 1));
+}
+
+function RiskBadge({ score }: { score: number }) {
+  const color = score >= 8 ? 'var(--sev-critical)' : score >= 5 ? 'var(--sev-high)' : score >= 2 ? 'var(--sev-medium)' : 'var(--status-resolved)';
+  const label = score >= 8 ? 'Critical' : score >= 5 ? 'High' : score >= 2 ? 'Medium' : 'Low';
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)',
+      color, background: `color-mix(in srgb, ${color} 12%, transparent)`,
+      border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
+      padding: '2px 7px', borderRadius: 100,
+    }}>{label} {score.toFixed(1)}</span>
+  );
+}
+
+function MiniSevBar({ sev, total }: { sev: Record<string, number>; total: number }) {
+  if (total === 0) return <div style={{ height: 3, borderRadius: 100, background: 'var(--bg-3)' }} />;
+  return (
+    <div style={{ display: 'flex', height: 3, borderRadius: 100, overflow: 'hidden', background: 'var(--bg-3)' }}>
+      {SEV_KEYS.filter(k => (sev[k] || 0) > 0).map(k => (
+        <div key={k} style={{ width: `${((sev[k] || 0) / total) * 100}%`, background: SEV_COLORS[k] }} />
+      ))}
+    </div>
+  );
+}
+
+function AssetOwnerTab({ findings, projectId }: { findings: Finding[]; projectId: string }) {
+  const [expanded, setExpanded] = React.useState<string | null>(null);
+
+  type OwnerStats = {
+    name: string;
+    total: number;
+    sev: Record<string, number>;
+    open: number;
+    inProgress: number;
+    resolved: number;
+    resRate: number;
+    risk: number;
+    findings: Finding[];
+  };
+
+  const ownerMap: Record<string, Finding[]> = {};
+  for (const f of findings) {
+    const key = f.assetOwner?.trim() || '(Unattributed)';
+    if (!ownerMap[key]) ownerMap[key] = [];
+    ownerMap[key].push(f);
+  }
+
+  const owners: OwnerStats[] = Object.entries(ownerMap).map(([name, fList]) => {
+    const sev: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    let open = 0, inProgress = 0, resolved = 0;
+    for (const f of fList) {
+      if (f.severity in sev) sev[f.severity]++;
+      if (f.status === 'resolved' || f.status === 'accepted') resolved++;
+      else if (f.status === 'in-progress' || f.status === 'in-review') inProgress++;
+      else open++;
+    }
+    const total = fList.length;
+    const resRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+    return { name, total, sev, open, inProgress, resolved, resRate, risk: riskScore(sev, total), findings: fList };
+  }).sort((a, b) => b.risk - a.risk);
+
+  const namedOwners = owners.filter(o => o.name !== '(Unattributed)');
+  const totalOwners = namedOwners.length;
+  const mostExposed = owners.length > 0 ? owners.reduce((best, o) =>
+    ((o.sev.critical || 0) + (o.sev.high || 0)) > ((best.sev.critical || 0) + (best.sev.high || 0)) ? o : best
+  ) : null;
+  const avgResRate = owners.length > 0
+    ? Math.round(owners.reduce((s, o) => s + o.resRate, 0) / owners.length)
+    : 0;
+  const totalUnresolved = owners.reduce((s, o) => s + o.open + o.inProgress, 0);
+  const totalCritHigh = owners.reduce((s, o) => s + (o.sev.critical || 0) + (o.sev.high || 0), 0);
+
+  if (findings.length === 0) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: 'var(--ink-3)', fontSize: 13, flexDirection: 'column', gap: 8 }}>
+        <Ico name="folder" size={28} style={{ opacity: 0.2 }} />
+        <span>No findings yet. Add findings and set Asset Owner to see breakdown.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+      {/* ── KPI strip ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--line-1)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+        {[
+          {
+            label: 'Asset Owners',
+            value: totalOwners,
+            sub: owners.find(o => o.name === '(Unattributed)')
+              ? `+ ${owners.find(o => o.name === '(Unattributed)')!.total} unattributed`
+              : 'all findings attributed',
+            color: 'var(--ink-0)',
+          },
+          {
+            label: 'Most Exposed Owner',
+            value: mostExposed ? mostExposed.name.split(' ').slice(0, 2).join(' ') : '—',
+            sub: mostExposed ? `${(mostExposed.sev.critical || 0) + (mostExposed.sev.high || 0)} crit/high findings` : '',
+            color: (mostExposed && ((mostExposed.sev.critical || 0) > 0)) ? 'var(--sev-critical)' : 'var(--sev-high)',
+            isText: true,
+          },
+          {
+            label: 'Avg Resolution Rate',
+            value: `${avgResRate}%`,
+            sub: `across ${owners.length} owner${owners.length !== 1 ? 's' : ''}`,
+            color: avgResRate >= 70 ? 'var(--status-resolved)' : avgResRate >= 40 ? 'var(--sev-medium)' : 'var(--sev-high)',
+          },
+          {
+            label: 'Total Unresolved',
+            value: totalUnresolved,
+            sub: `${totalCritHigh} crit/high open`,
+            color: totalCritHigh > 0 ? 'var(--sev-critical)' : totalUnresolved > 0 ? 'var(--sev-medium)' : 'var(--status-resolved)',
+          },
+        ].map((kpi, i) => (
+          <div key={i} style={{ background: 'var(--bg-0)', padding: '16px 20px' }}>
+            <div className="eyebrow" style={{ marginBottom: 8, fontSize: 9 }}>{kpi.label}</div>
+            <div style={{
+              fontSize: kpi.isText ? 18 : 26, fontWeight: 700,
+              fontFamily: kpi.isText ? 'var(--font-sans)' : 'var(--font-mono)',
+              color: kpi.color, letterSpacing: kpi.isText ? '-0.01em' : '-0.03em', lineHeight: 1,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{kpi.value}</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5 }}>{kpi.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Per-owner table ── */}
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)' }}>
+          <div className="eyebrow" style={{ marginBottom: 2 }}>Breakdown by Asset Owner</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            Click a row to expand findings · Set owner in individual findings
+          </div>
+        </div>
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Asset Owner</th>
+              <th style={{ width: 60, textAlign: 'center' }}>Total</th>
+              <th style={{ width: 44, textAlign: 'center' }}>C</th>
+              <th style={{ width: 44, textAlign: 'center' }}>H</th>
+              <th style={{ width: 44, textAlign: 'center' }}>M</th>
+              <th style={{ width: 44, textAlign: 'center' }}>L</th>
+              <th style={{ width: 44, textAlign: 'center' }}>I</th>
+              <th style={{ width: 70, textAlign: 'center' }}>Open</th>
+              <th style={{ width: 80, textAlign: 'center' }}>Resolved</th>
+              <th style={{ width: 90, textAlign: 'center' }}>Res. Rate</th>
+              <th style={{ width: 130 }}>Risk</th>
+            </tr>
+          </thead>
+          <tbody>
+            {owners.map(owner => (
+              <React.Fragment key={owner.name}>
+                <tr
+                  onClick={() => setExpanded(expanded === owner.name ? null : owner.name)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Ico
+                        name={expanded === owner.name ? 'chevDown' : 'chevRight'}
+                        size={12}
+                        style={{ color: 'var(--ink-3)', flexShrink: 0 }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 13, color: owner.name === '(Unattributed)' ? 'var(--ink-3)' : 'var(--ink-0)' }}>
+                          {owner.name}
+                        </div>
+                        <div style={{ marginTop: 4 }}>
+                          <MiniSevBar sev={owner.sev} total={owner.total} />
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600 }}>{owner.total}</span>
+                  </td>
+                  {SEV_KEYS.map(k => (
+                    <td key={k} style={{ textAlign: 'center' }}>
+                      {(owner.sev[k] || 0) > 0 ? (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: SEV_COLORS[k] }}>
+                          {owner.sev[k]}
+                        </span>
+                      ) : <span style={{ color: 'var(--ink-4)', fontSize: 11 }}>—</span>}
+                    </td>
+                  ))}
+                  <td style={{ textAlign: 'center' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: owner.open > 0 ? 'var(--sev-medium)' : 'var(--ink-3)' }}>
+                      {owner.open + owner.inProgress}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, color: owner.resolved > 0 ? 'var(--status-resolved)' : 'var(--ink-3)' }}>
+                      {owner.resolved}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600, color: owner.resRate >= 70 ? 'var(--status-resolved)' : owner.resRate >= 40 ? 'var(--sev-medium)' : 'var(--sev-high)' }}>
+                        {owner.resRate}%
+                      </span>
+                      <div style={{ width: 44, height: 3, background: 'var(--bg-3)', borderRadius: 100, overflow: 'hidden' }}>
+                        <div style={{ width: `${owner.resRate}%`, height: '100%', background: owner.resRate >= 70 ? 'var(--status-resolved)' : 'var(--sev-medium)', borderRadius: 100 }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <RiskBadge score={owner.risk} />
+                  </td>
+                </tr>
+
+                {/* Expanded finding rows */}
+                {expanded === owner.name && owner.findings.map(f => (
+                  <tr key={f.id} style={{ background: 'var(--bg-2)' }}>
+                    <td colSpan={2} style={{ paddingLeft: 44 }}>
+                      <Link
+                        href={`/projects/${projectId}/findings/${f.id}`}
+                        style={{ color: 'var(--ink-0)', textDecoration: 'none', fontWeight: 500, fontSize: 12 }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {f.title}
+                      </Link>
+                      <span className="mono" style={{ marginLeft: 8, fontSize: 10, color: 'var(--ink-3)' }}>{f.code}</span>
+                    </td>
+                    {SEV_KEYS.map(k => (
+                      <td key={k} style={{ textAlign: 'center' }}>
+                        {f.severity === k ? (
+                          <span style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)', color: SEV_COLORS[k] }}>●</span>
+                        ) : null}
+                      </td>
+                    ))}
+                    <td style={{ textAlign: 'center' }}>
+                      {f.status !== 'resolved' && f.status !== 'accepted' ? (
+                        <span style={{ fontSize: 10, color: 'var(--sev-medium)' }}>●</span>
+                      ) : null}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {(f.status === 'resolved' || f.status === 'accepted') ? (
+                        <span style={{ fontSize: 10, color: 'var(--status-resolved)' }}>●</span>
+                      ) : null}
+                    </td>
+                    <td colSpan={2}>
+                      <StatusPill status={f.status} />
+                    </td>
+                  </tr>
+                ))}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
     </div>
   );
 }

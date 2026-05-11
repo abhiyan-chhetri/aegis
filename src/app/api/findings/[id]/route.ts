@@ -67,7 +67,7 @@ export async function PATCH(
     const allowedFields = [
       'title', 'severity', 'status', 'summary', 'description',
       'reproduction', 'impact', 'remediation', 'references',
-      'cwe', 'owasp', 'component', 'assets', 'assigneeId', 'cvss', 'cvssVector',
+      'cwe', 'owasp', 'component', 'assets', 'assetOwner', 'assigneeId', 'cvss', 'cvssVector',
       'discovered', 'hasCVE',
     ];
 

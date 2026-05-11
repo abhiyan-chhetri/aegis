@@ -296,6 +296,7 @@ type Activity = { id: string; action: string; target: string; detail: string; cr
 type Finding = {
   id?: string; title: string; severity: string; status?: string;
   cvss?: number; cvssVector?: string; cwe: string; owasp: string;
+  assetOwner?: string;
   summary?: string; description: string; reproduction?: string;
   impact?: string; remediation?: string; references?: string;
   activities?: Activity[];
@@ -320,6 +321,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   const [remediation,   setRemediation]   = useState(finding?.remediation||'');
   const [references,    setReferences]    = useState(finding?.references||'');
   const [affectedAssets,setAffectedAssets]= useState(Array.isArray(assets)?assets.join('\n'):'');
+  const [assetOwner,    setAssetOwner]    = useState(finding?.assetOwner||'');
   const [editorTab,     setEditorTab]     = useState<'Write'|'Preview'>('Write');
   const [fieldTab,      setFieldTab]      = useState<FieldTab>('Description');
   const [saving,        setSaving]        = useState(false);
@@ -589,7 +591,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         await fetch(`/api/findings/${finding.id}`,{
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
-            title,severity,status,cwe,owasp,description,reproduction,impact,remediation,references,
+            title,severity,status,cwe,owasp,assetOwner,description,reproduction,impact,remediation,references,
             assets:affectedAssets.split('\n').map(a=>a.trim()).filter(Boolean),
             cvss:cvssScore,
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
@@ -600,7 +602,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         const res = await fetch(`/api/projects/${projectId}/findings`,{
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
-            title:title.trim(),severity,description:description.trim(),cwe:cwe.trim(),owasp:owasp.trim(),
+            title:title.trim(),severity,description:description.trim(),cwe:cwe.trim(),owasp:owasp.trim(),assetOwner:assetOwner.trim(),
             assets:affectedAssets.split('\n').map(a=>a.trim()).filter(Boolean),
             reproduction:reproduction.trim(),impact:impact.trim(),remediation:remediation.trim(),references:references.trim(),
             cvss:cvssScore,
@@ -932,6 +934,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
               <div className="form-group">
                 <label className="form-label">Affected Assets</label>
                 <textarea className="input" value={affectedAssets} onChange={e=>setAffectedAssets(e.target.value)} placeholder="One per line" style={{width:'100%',fontFamily:'var(--font-mono)',fontSize:11,minHeight:70,resize:'vertical'}}/>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Asset Owner</label>
+                <input className="input" value={assetOwner} onChange={e=>setAssetOwner(e.target.value)} placeholder="e.g. Platform Team, Payments, Mobile App" style={{width:'100%'}}/>
               </div>
             </div>
           </div>
