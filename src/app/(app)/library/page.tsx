@@ -1,9 +1,10 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
 import { VulnListClient } from './VulnListClient';
 
 export default async function LibraryPage() {
+  await connection();
   const findings = await db.finding.findMany({
     orderBy: [{ severity: 'asc' }, { createdAt: 'desc' }],
     include: {

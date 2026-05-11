@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export const dynamic = 'force-dynamic';
 
+import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
@@ -10,7 +10,8 @@ import { ReportPreview } from './ReportPreview';
 
 type Props = { params: Promise<{ id: string }> };
 
-export default async function ReportPage({ params }: Props) {
+export default async function ReportPage({params }: Props) {
+  await connection();
   const { id } = await params;
 
   const [project, rawRows, allUsers] = await Promise.all([

@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import React from 'react';
 import { getSession } from '@/lib/auth';
 import { redirect } from 'next/navigation';
@@ -6,6 +6,7 @@ import { Topbar } from '@/components/chrome/Topbar';
 import { PortfolioDashboard } from '@/components/dashboard/PortfolioDashboard';
 
 export default async function PortfolioPage() {
+  await connection();
   const session = await getSession();
   if (!session) redirect('/login');
 

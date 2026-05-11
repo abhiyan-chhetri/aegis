@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import React from 'react';
 import { getSession } from '@/lib/auth';
 import { redirect } from 'next/navigation';
@@ -19,6 +19,7 @@ interface AuditRow {
 const ID_RE = /^[a-z0-9]{20,}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function AuditTrailPage() {
+  await connection();
   const session = await getSession();
   if (!session) redirect('/login');
 

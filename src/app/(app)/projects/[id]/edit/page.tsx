@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
@@ -8,7 +8,8 @@ import { EditProjectForm } from './EditProjectForm';
 
 type Props = { params: Promise<{ id: string }> };
 
-export default async function EditProjectPage({ params }: Props) {
+export default async function EditProjectPage({params }: Props) {
+  await connection();
   const { id } = await params;
 
   const [project, users, rawRows] = await Promise.all([

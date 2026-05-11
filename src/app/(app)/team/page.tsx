@@ -1,10 +1,11 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import React from 'react';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
 import { TeamClient } from './TeamClient';
 
 export default async function TeamPage() {
+  await connection();
   const projects = await db.project.findMany({
     where: { status: { not: 'completed' } },
     include: { findings: true },

@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
@@ -8,7 +8,8 @@ import { UnifiedFindingEditor } from '@/components/findings/UnifiedFindingEditor
 
 type Props = { params: Promise<{ id: string }> };
 
-export default async function NewFindingPage({ params }: Props) {
+export default async function NewFindingPage({params }: Props) {
+  await connection();
   const { id } = await params;
 
   const [project, ownerRows, projectRows] = await Promise.all([

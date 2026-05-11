@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-export const dynamic = 'force-dynamic';
 
+import { connection } from 'next/server';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
 import { ReportsClient } from './ReportsClient';
 import { getSession } from '@/lib/auth';
 
 export default async function ReportsPage() {
+  await connection();
   const session = await getSession();
 
   const reports = await db.report.findMany({

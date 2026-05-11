@@ -1,5 +1,5 @@
-export const dynamic = 'force-dynamic';
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { connection } from 'next/server';
 import React from 'react';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
@@ -7,6 +7,7 @@ import { Ico } from '@/components/chrome/icons';
 import { TemplatesGrid } from './TemplatesGrid';
 
 export default async function TemplatesPage() {
+  await connection();
   const allTemplates = await db.reportTemplate.findMany({ orderBy: { updatedAt: 'desc' } });
   const templates = allTemplates.filter((t) => t.name === 'Technical Report');
 

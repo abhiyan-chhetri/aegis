@@ -1,4 +1,4 @@
-export const dynamic = 'force-dynamic';
+import { connection } from 'next/server';
 import React from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db';
@@ -7,6 +7,7 @@ import { Ico } from '@/components/chrome/icons';
 import { NewProjectForm } from './NewProjectForm';
 
 export default async function NewProjectPage() {
+  await connection();
   const [users, rawOwners] = await Promise.all([
     db.user.findMany({
       orderBy: { name: 'asc' },

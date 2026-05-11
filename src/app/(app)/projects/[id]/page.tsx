@@ -1,5 +1,5 @@
-export const dynamic = 'force-dynamic';
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
@@ -9,7 +9,8 @@ import { ProjectTabs } from './ProjectTabs';
 
 type Props = { params: Promise<{ id: string }> };
 
-export default async function ProjectPage({ params }: Props) {
+export default async function ProjectPage({params }: Props) {
+  await connection();
   const { id } = await params;
 
   const [project, allUsers, rawRows] = await Promise.all([

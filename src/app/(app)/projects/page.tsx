@@ -1,5 +1,5 @@
-export const dynamic = 'force-dynamic';
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { connection } from 'next/server';
 import React from 'react';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { Ico } from '@/components/chrome/icons';
 
 export default async function ProjectsPage() {
+  await connection();
   const projects = await db.project.findMany({
     include: { lead: true, findings: true },
     orderBy: { createdAt: 'desc' },

@@ -1,5 +1,5 @@
-export const dynamic = 'force-dynamic';
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { connection } from 'next/server';
 import React from 'react';
 import Link from 'next/link';
 import { db } from '@/lib/db';
@@ -44,6 +44,7 @@ const TREND_DATA: { critical: number; high: number; medium: number; low: number 
 // ─── server component ────────────────────────────────────────────────────────
 
 export default async function DashboardPage() {
+  await connection();
   const session = await getSession();
 
   const [projects, activities, reports] = await Promise.all([
