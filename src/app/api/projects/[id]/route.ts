@@ -6,12 +6,13 @@ import { sendWebhook } from '@/lib/webhook';
 // All content fields that we manage via raw SQL (bypasses Prisma schema validation entirely)
 // This includes executiveSummary even though it's in the original schema — raw SQL is safer
 // for fields that may be affected by our manual class.ts patch.
-const CONTENT_COLS = ['executiveSummary', 'methodology', 'attackNarrative', 'members', 'notes'] as const;
+const CONTENT_COLS = ['executiveSummary', 'methodology', 'attackNarrative', 'members', 'assetOwners', 'notes'] as const;
 type ContentCol = typeof CONTENT_COLS[number];
 
 export async function getRawContentFields(id: string): Promise<Record<ContentCol, string>> {
   const rows = await db.$queryRawUnsafe<Record<string, string>[]>(
     `SELECT "executiveSummary", methodology, "attackNarrative", members,
+            COALESCE("assetOwners", '[]') as "assetOwners",
             COALESCE(notes, '') as notes
      FROM "Project" WHERE id = $1`,
     id
@@ -22,6 +23,7 @@ export async function getRawContentFields(id: string): Promise<Record<ContentCol
     methodology:      row.methodology      ?? '',
     attackNarrative:  row.attackNarrative  ?? '',
     members:          row.members          ?? '[]',
+    assetOwners:      row.assetOwners      ?? '[]',
     notes:            row.notes            ?? '',
   };
 }
@@ -77,7 +79,7 @@ export async function PATCH(
     const {
       name, status, progress, engagement, scope,
       // Content fields — handled via raw SQL
-      executiveSummary, methodology, attackNarrative, members, notes,
+      executiveSummary, methodology, attackNarrative, members, assetOwners, notes,
       startDate, endDate, leadId,
     } = body;
 
@@ -105,6 +107,8 @@ export async function PATCH(
       rawUpdates.push({ col: 'notes', val: String(notes) });
     if (members !== undefined)
       rawUpdates.push({ col: 'members', val: Array.isArray(members) ? JSON.stringify(members) : String(members) });
+    if (assetOwners !== undefined)
+      rawUpdates.push({ col: 'assetOwners', val: Array.isArray(assetOwners) ? JSON.stringify(assetOwners) : String(assetOwners) });
 
     // Run everything in parallel
     await Promise.all([

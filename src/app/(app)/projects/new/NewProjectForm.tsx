@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
 
@@ -23,9 +23,137 @@ function generateCode(name: string): string {
   return abbr ? `${abbr}-${year}${rand}` : `PROJ-${year}${rand}`;
 }
 
-type Props = { users: User[] };
+type Props = { users: User[]; existingOwners: string[] };
 
-export function NewProjectForm({ users }: Props) {
+// ── Asset Owner chip input ─────────────────────────────────────────────────────
+function AssetOwnerInput({
+  value,
+  onChange,
+  suggestions,
+}: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  suggestions: string[];
+}) {
+  const [input, setInput] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filtered = suggestions.filter(
+    s => s.toLowerCase().includes(input.toLowerCase()) && !value.includes(s)
+  );
+
+  function add(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || value.includes(trimmed)) { setInput(''); setShowSuggestions(false); return; }
+    onChange([...value, trimmed]);
+    setInput('');
+    setShowSuggestions(false);
+    inputRef.current?.focus();
+  }
+
+  function remove(name: string) {
+    onChange(value.filter(v => v !== name));
+  }
+
+  function handleKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); if (input.trim()) add(input); }
+    if (e.key === 'Backspace' && !input && value.length > 0) remove(value[value.length - 1]);
+    if (e.key === 'Escape') setShowSuggestions(false);
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      {/* Chips + input row */}
+      <div
+        onClick={() => inputRef.current?.focus()}
+        style={{
+          display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
+          padding: '6px 10px', background: 'var(--bg-0)', border: '1px solid var(--line-2)',
+          borderRadius: 'var(--r-sm)', cursor: 'text', minHeight: 38,
+        }}
+      >
+        {value.map(owner => (
+          <span key={owner} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            background: 'var(--bg-3)', border: '1px solid var(--line-2)',
+            borderRadius: 100, padding: '2px 8px 2px 10px', fontSize: 12,
+            color: 'var(--ink-1)', whiteSpace: 'nowrap',
+          }}>
+            {owner}
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); remove(owner); }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: 'var(--ink-3)', display: 'flex', alignItems: 'center', lineHeight: 1,
+              }}
+            >
+              <Ico name="x" size={10} />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={e => { setInput(e.target.value); setShowSuggestions(true); }}
+          onKeyDown={handleKey}
+          onFocus={() => setShowSuggestions(true)}
+          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          placeholder={value.length === 0 ? 'e.g. Payments Team, API Platform…' : ''}
+          style={{
+            flex: 1, minWidth: 140, border: 'none', outline: 'none', background: 'transparent',
+            fontSize: 13, color: 'var(--ink-0)', padding: '0 2px',
+          }}
+        />
+        {input.trim() && (
+          <button
+            type="button"
+            onClick={() => add(input)}
+            style={{
+              padding: '2px 8px', background: 'var(--accent)', color: 'white',
+              border: 'none', borderRadius: 100, fontSize: 11, cursor: 'pointer',
+            }}
+          >
+            Add
+          </button>
+        )}
+      </div>
+
+      {/* Suggestions dropdown */}
+      {showSuggestions && filtered.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, marginTop: 2,
+          background: 'var(--bg-1)', border: '1px solid var(--line-2)', borderRadius: 'var(--r-sm)',
+          boxShadow: 'var(--shadow-md)', maxHeight: 180, overflowY: 'auto',
+        }}>
+          {filtered.map(s => (
+            <button
+              key={s}
+              type="button"
+              onMouseDown={() => add(s)}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                background: 'none', border: 'none', cursor: 'pointer', fontSize: 13,
+                color: 'var(--ink-1)',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 5 }}>
+        Press Enter or comma to add · Backspace to remove last
+      </div>
+    </div>
+  );
+}
+
+export function NewProjectForm({ users, existingOwners }: Props) {
   const router = useRouter();
 
   const [name, setName] = useState('');
@@ -36,6 +164,7 @@ export function NewProjectForm({ users }: Props) {
   const [endDate, setEndDate] = useState('');
   const [leadId, setLeadId] = useState(users[0]?.id || '');
   const [teamMembers, setTeamMembers] = useState<string[]>([]);
+  const [assetOwners, setAssetOwners] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engagementTypes, setEngagementTypes] = useState<string[]>(DEFAULT_ENGAGEMENT_TYPES);
@@ -74,7 +203,7 @@ export function NewProjectForm({ users }: Props) {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers }),
+        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -215,6 +344,19 @@ export function NewProjectForm({ users }: Props) {
             <option key={u.id} value={u.id}>{u.name} — {u.role}</option>
           ))}
         </select>
+      </div>
+
+      {/* Asset Owners */}
+      <div className="form-group" style={{ marginBottom: 20 }}>
+        <label className="form-label">Asset Owners</label>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>
+          Teams or stakeholders responsible for assets in scope. Used as suggestions when creating findings.
+        </div>
+        <AssetOwnerInput
+          value={assetOwners}
+          onChange={setAssetOwners}
+          suggestions={existingOwners}
+        />
       </div>
 
       {/* Team Members */}

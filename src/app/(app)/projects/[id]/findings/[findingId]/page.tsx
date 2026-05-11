@@ -10,20 +10,36 @@ type Props = { params: Promise<{ id: string; findingId: string }> };
 export default async function FindingPage({ params }: Props) {
   const { id, findingId } = await params;
 
-  const finding = await db.finding.findUnique({
-    where: { id: findingId },
-    include: {
-      project: true,
-      assignee: true,
-      evidence: true,
-      activities: { include: { user: true }, orderBy: { createdAt: 'desc' } },
-    },
-  });
+  const [finding, ownerRows, projectRows] = await Promise.all([
+    db.finding.findUnique({
+      where: { id: findingId },
+      include: {
+        project: true,
+        assignee: true,
+        evidence: true,
+        activities: { include: { user: true }, orderBy: { createdAt: 'desc' } },
+      },
+    }),
+    db.$queryRawUnsafe<{ assetOwner: string }[]>(
+      `SELECT DISTINCT "assetOwner" FROM "Finding" WHERE "projectId" = $1 AND "assetOwner" != '' ORDER BY "assetOwner"`, id
+    ).catch(() => [] as { assetOwner: string }[]),
+    db.$queryRawUnsafe<{ assetOwners: string }[]>(
+      `SELECT COALESCE("assetOwners", '[]') as "assetOwners" FROM "Project" WHERE id = $1`, id
+    ).catch(() => [] as { assetOwners: string }[]),
+  ]);
 
   if (!finding || finding.projectId !== id) notFound();
 
   let assets: string[] = [];
   try { assets = JSON.parse(finding.assets); } catch { assets = []; }
+
+  let projectOwners: string[] = [];
+  try { projectOwners = JSON.parse(projectRows[0]?.assetOwners ?? '[]'); } catch { /* noop */ }
+
+  const ownerSuggestions = Array.from(new Set([
+    ...projectOwners,
+    ...ownerRows.map(r => r.assetOwner),
+  ])).sort();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -43,6 +59,7 @@ export default async function FindingPage({ params }: Props) {
         assets={assets}
         projectId={id}
         isEditing={true}
+        ownerSuggestions={ownerSuggestions}
       />
     </div>
   );

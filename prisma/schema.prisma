@@ -5,7 +5,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -37,6 +36,7 @@ model Project {
   methodology      String   @default("")
   attackNarrative  String   @default("")
   members          String   @default("[]")
+  assetOwners      String   @default("[]")
   notes            String   @default("")
   status           String   @default("in-progress")
   progress         Int      @default(0)

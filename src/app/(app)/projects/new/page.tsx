@@ -6,10 +6,34 @@ import { Ico } from '@/components/chrome/icons';
 import { NewProjectForm } from './NewProjectForm';
 
 export default async function NewProjectPage() {
-  const users = await db.user.findMany({
-    orderBy: { name: 'asc' },
-    select: { id: true, name: true, role: true, team: true, email: true },
-  });
+  const [users, rawOwners] = await Promise.all([
+    db.user.findMany({
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, role: true, team: true, email: true },
+    }),
+    // Collect unique assetOwner values from all existing findings + project assetOwners lists
+    db.$queryRawUnsafe<{ assetOwner: string }[]>(
+      `SELECT DISTINCT "assetOwner" FROM "Finding" WHERE "assetOwner" != '' ORDER BY "assetOwner"`
+    ).catch(() => [] as { assetOwner: string }[]),
+  ]);
+
+  // Also pull from project-level assetOwners lists
+  const projectOwnerRows = await db.$queryRawUnsafe<{ assetOwners: string }[]>(
+    `SELECT COALESCE("assetOwners", '[]') as "assetOwners" FROM "Project"`
+  ).catch(() => [] as { assetOwners: string }[]);
+
+  const projectOwnerNames: string[] = [];
+  for (const row of projectOwnerRows) {
+    try {
+      const arr = JSON.parse(row.assetOwners);
+      if (Array.isArray(arr)) projectOwnerNames.push(...arr);
+    } catch { /* skip */ }
+  }
+
+  const existingOwners = Array.from(new Set([
+    ...rawOwners.map(r => r.assetOwner),
+    ...projectOwnerNames,
+  ])).sort();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -43,7 +67,7 @@ export default async function NewProjectPage() {
 
             {/* Form panel */}
             <div className="card" style={{ padding: '28px 28px 24px' }}>
-              <NewProjectForm users={users} />
+              <NewProjectForm users={users} existingOwners={existingOwners} />
             </div>
 
             {/* Side tips */}

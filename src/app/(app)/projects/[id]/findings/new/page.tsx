@@ -10,8 +10,24 @@ type Props = { params: Promise<{ id: string }> };
 export default async function NewFindingPage({ params }: Props) {
   const { id } = await params;
 
-  const project = await db.project.findUnique({ where: { id }, select: { id: true, name: true, code: true } });
+  const [project, ownerRows, projectRows] = await Promise.all([
+    db.project.findUnique({ where: { id }, select: { id: true, name: true, code: true } }),
+    db.$queryRawUnsafe<{ assetOwner: string }[]>(
+      `SELECT DISTINCT "assetOwner" FROM "Finding" WHERE "projectId" = $1 AND "assetOwner" != '' ORDER BY "assetOwner"`, id
+    ).catch(() => [] as { assetOwner: string }[]),
+    db.$queryRawUnsafe<{ assetOwners: string }[]>(
+      `SELECT COALESCE("assetOwners", '[]') as "assetOwners" FROM "Project" WHERE id = $1`, id
+    ).catch(() => [] as { assetOwners: string }[]),
+  ]);
   if (!project) notFound();
+
+  let projectOwners: string[] = [];
+  try { projectOwners = JSON.parse(projectRows[0]?.assetOwners ?? '[]'); } catch { /* noop */ }
+
+  const ownerSuggestions = Array.from(new Set([
+    ...projectOwners,
+    ...ownerRows.map(r => r.assetOwner),
+  ])).sort();
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -26,7 +42,7 @@ export default async function NewFindingPage({ params }: Props) {
           </Link>
         }
       />
-      <UnifiedFindingEditor projectId={id} isEditing={false} />
+      <UnifiedFindingEditor projectId={id} isEditing={false} ownerSuggestions={ownerSuggestions} />
     </div>
   );
 }

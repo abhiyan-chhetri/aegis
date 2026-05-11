@@ -302,12 +302,12 @@ type Finding = {
   activities?: Activity[];
   assignee?: { name: string; initials: string } | null;
 };
-type Props = { finding?: Finding; assets?: string[]; projectId: string; isEditing?: boolean };
+type Props = { finding?: Finding; assets?: string[]; projectId: string; isEditing?: boolean; ownerSuggestions?: string[] };
 
 const FIELD_TABS = ['Description','Reproduction','Impact','Remediation','References'] as const;
 type FieldTab = typeof FIELD_TABS[number];
 
-export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=false }: Props) {
+export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=false, ownerSuggestions=[] }: Props) {
   const router = useRouter();
 
   const [title,         setTitle]         = useState(finding?.title||'');
@@ -938,7 +938,19 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
               <div className="form-group">
                 <label className="form-label">Asset Owner</label>
-                <input className="input" value={assetOwner} onChange={e=>setAssetOwner(e.target.value)} placeholder="e.g. Platform Team, Payments, Mobile App" style={{width:'100%'}}/>
+                <input
+                  className="input"
+                  list="asset-owner-suggestions"
+                  value={assetOwner}
+                  onChange={e=>setAssetOwner(e.target.value)}
+                  placeholder="e.g. Payments Team, API Platform…"
+                  style={{width:'100%'}}
+                />
+                {ownerSuggestions.length > 0 && (
+                  <datalist id="asset-owner-suggestions">
+                    {ownerSuggestions.map(s => <option key={s} value={s} />)}
+                  </datalist>
+                )}
               </div>
             </div>
           </div>
