@@ -233,20 +233,23 @@ ADMIN_INITIALS=$(echo "$ADMIN_NAME" | awk '{for(i=1;i<=NF;i++) printf substr($i,
 NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
 
 # Hash password with bcrypt via Node.js (safe from shell escaping)
-# Create a temp Node script to hash the password
-HASH_SCRIPT=$(mktemp)
-cat > "$HASH_SCRIPT" << 'HASHEOF'
+# Use NODE_PATH to ensure bcryptjs is found in node_modules
+HASHED_PASS=$(NODE_PATH="./node_modules:$NODE_PATH" node -e "
 const bcrypt = require('bcryptjs');
 const password = process.argv[1];
-console.log(bcrypt.hashSync(password, 12));
-HASHEOF
-
-HASHED_PASS=$(node "$HASH_SCRIPT" "$ADMIN_PASSWORD" 2>/dev/null) || {
+try {
+  console.log(bcrypt.hashSync(password, 12));
+} catch(err) {
+  console.error('Error:', err.message);
+  process.exit(1);
+}
+" "$ADMIN_PASSWORD" 2>/dev/null) || {
   echo -e "${RED}✗ Failed to hash password with bcryptjs${NC}"
-  rm -f "$HASH_SCRIPT"
+  echo -e "${YELLOW}Troubleshooting:${NC}"
+  echo -e "  1. Make sure npm install completed: check if node_modules/ exists"
+  echo -e "  2. Try: npm install"
   exit 1
 }
-rm -f "$HASH_SCRIPT"
 
 # Escape single quotes in admin name for SQL
 ADMIN_NAME_ESCAPED="${ADMIN_NAME//\'/\'\'}"
