@@ -232,24 +232,33 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9!
 ADMIN_INITIALS=$(echo "$ADMIN_NAME" | awk '{for(i=1;i<=NF;i++) printf substr($i,1,1)}' | head -c 3 | tr '[:lower:]' '[:upper:]')
 NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
 
-# Hash password with bcrypt (or SHA-256 fallback)
-HASHED_PASS=$(node -e "
-try {
-  const bcrypt = require('bcryptjs');
-  console.log(bcrypt.hashSync('$ADMIN_PASSWORD', 12));
-} catch(e) {
-  const crypto = require('crypto');
-  console.log(crypto.createHash('sha256').update('$ADMIN_PASSWORD').digest('hex'));
+# Hash password with bcrypt via Node.js (safe from shell escaping)
+# Create a temp Node script to hash the password
+HASH_SCRIPT=$(mktemp)
+cat > "$HASH_SCRIPT" << 'HASHEOF'
+const bcrypt = require('bcryptjs');
+const password = process.argv[1];
+console.log(bcrypt.hashSync(password, 12));
+HASHEOF
+
+HASHED_PASS=$(node "$HASH_SCRIPT" "$ADMIN_PASSWORD" 2>/dev/null) || {
+  echo -e "${RED}✗ Failed to hash password with bcryptjs${NC}"
+  rm -f "$HASH_SCRIPT"
+  exit 1
 }
-" 2>/dev/null || node -e "const crypto = require('crypto'); console.log(crypto.createHash('sha256').update('$ADMIN_PASSWORD').digest('hex'))")
+rm -f "$HASH_SCRIPT"
+
+# Escape single quotes in admin name for SQL
+ADMIN_NAME_ESCAPED="${ADMIN_NAME//\'/\'\'}"
+ADMIN_EMAIL_ESCAPED="${ADMIN_EMAIL//\'/\'\'}"
 
 psql "$DATABASE_URL" << EOF 2>/dev/null
 INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt", "updatedAt")
 VALUES (
   '$ADMIN_ID',
-  '$ADMIN_NAME',
+  '$ADMIN_NAME_ESCAPED',
   '$ADMIN_INITIALS',
-  '$ADMIN_EMAIL',
+  '$ADMIN_EMAIL_ESCAPED',
   '$HASHED_PASS',
   'admin',
   'Security',
