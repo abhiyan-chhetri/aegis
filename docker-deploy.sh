@@ -96,6 +96,17 @@ for migration_dir in $(ls -d prisma/migrations/*/ 2>/dev/null | sort); do
 done
 success "Migrations completed"
 
+info "Applying schema patches (idempotent)..."
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" << 'PATCHES'
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "notes"                TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "assetOwner"           TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "assetOwners"          TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "targetCode"           TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementYear"       TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "previousEngagementId" TEXT    DEFAULT NULL;
+PATCHES
+success "Schema patches applied"
+
 # ── Build app image ───────────────────────────────────────────────────────────
 banner "5. Building app image"
 DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_CONTAINER}:5432/${DB_NAME}"

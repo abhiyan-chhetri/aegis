@@ -220,6 +220,17 @@ for migration_dir in prisma/migrations/*/; do
 done
 echo -e "${GREEN}✓ Migrations completed${NC}"
 
+echo "Applying schema patches (idempotent)..."
+psql "$DATABASE_URL" << 'PATCHES'
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "notes"                TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "assetOwner"           TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "assetOwners"          TEXT    NOT NULL DEFAULT '[]';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "targetCode"           TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementYear"       TEXT    NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "previousEngagementId" TEXT    DEFAULT NULL;
+PATCHES
+echo -e "${GREEN}✓ Schema patches applied${NC}"
+
 # ==============================================================================
 # 8. CREATE ADMIN USER
 # ==============================================================================
