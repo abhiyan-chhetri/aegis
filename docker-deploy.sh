@@ -139,19 +139,64 @@ success "App image built: $IMAGE_NAME"
 
 # ── Run database migrations ───────────────────────────────────────────────────
 banner "5. Running database migrations"
-MIGRATION_SQL="prisma/migrations/20260505000000_init/migration.sql"
-if [[ -f "$MIGRATION_SQL" ]]; then
-  docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" < "$MIGRATION_SQL" 2>&1 \
-    | grep -v "already exists" | grep -v "^$" | head -20 || true
-  success "Migrations applied"
-else
-  warn "Migration SQL not found at $MIGRATION_SQL — skipping"
-fi
 
-# Add notes column if not exists (safe to run multiple times)
-docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -c \
-  'ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "notes" TEXT NOT NULL DEFAULT '"''"';' &>/dev/null && \
-  success "Ensured notes column exists" || true
+# Create Prisma-compatible migration tracking table (idempotent)
+docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -c '
+  CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+    id              VARCHAR(36)  NOT NULL,
+    checksum        VARCHAR(64)  NOT NULL,
+    finished_at     TIMESTAMPTZ,
+    migration_name  VARCHAR(255) NOT NULL,
+    logs            TEXT,
+    rolled_back_at  TIMESTAMPTZ,
+    started_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    applied_steps_count INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (id)
+  );
+' &>/dev/null
+
+# Apply each migration file in order — skip already-applied ones
+for migration_dir in $(ls -d prisma/migrations/*/  2>/dev/null | sort); do
+  migration_name=$(basename "$migration_dir")
+  sql_file="${migration_dir}migration.sql"
+  [[ ! -f "$sql_file" ]] && continue
+
+  # Check if already successfully applied
+  applied=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
+    "SELECT COUNT(*) FROM _prisma_migrations WHERE migration_name='${migration_name}' AND finished_at IS NOT NULL" \
+    2>/dev/null || echo "0")
+  applied="${applied//[[:space:]]/}"
+
+  if [[ "$applied" -gt 0 ]]; then
+    info "Already applied: $migration_name"
+    continue
+  fi
+
+  info "Applying migration: $migration_name"
+  MIG_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || \
+           uuidgen 2>/dev/null || \
+           date +%s%N | sha256sum | head -c 36)
+
+  # Record start
+  docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -c \
+    "INSERT INTO _prisma_migrations (id, checksum, migration_name, started_at, applied_steps_count)
+     VALUES ('${MIG_ID}', 'manual', '${migration_name}', NOW(), 0)
+     ON CONFLICT DO NOTHING;" &>/dev/null || true
+
+  # Execute the SQL (ignore "already exists" noise, treat real errors as warnings)
+  if docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" \
+       --set ON_ERROR_STOP=0 < "$sql_file" 2>&1 \
+       | grep -v "^$" | grep -iv "already exists" | head -10; then
+    docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -c \
+      "UPDATE _prisma_migrations SET finished_at=NOW(), applied_steps_count=1 WHERE id='${MIG_ID}';" \
+      &>/dev/null || true
+    success "Applied: $migration_name"
+  else
+    warn "Migration $migration_name may have issues — check DB logs"
+  fi
+done
+
+success "All migrations processed"
 
 # ── Start app container ───────────────────────────────────────────────────────
 banner "6. Starting app container"

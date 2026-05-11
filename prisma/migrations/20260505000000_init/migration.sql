@@ -315,5 +315,3 @@ ALTER TABLE "FindingComment" ADD CONSTRAINT "FindingComment_userId_fkey" FOREIGN
 -- AddForeignKey
 ALTER TABLE "ProjectSnapshot" ADD CONSTRAINT "ProjectSnapshot_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- Add notes column to Project (safe if already exists)
-ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "notes" TEXT NOT NULL DEFAULT '';
