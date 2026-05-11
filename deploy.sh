@@ -211,20 +211,82 @@ npx prisma generate
 echo -e "${GREEN}✓ Prisma client generated${NC}"
 
 echo "Running database migrations..."
-# Prisma 7 removed url from schema — run SQL migration directly via psql
-MIGRATION_SQL="prisma/migrations/20260505000000_init/migration.sql"
-if [[ -f "$MIGRATION_SQL" ]]; then
-    psql "$DATABASE_URL" -f "$MIGRATION_SQL" 2>&1 | grep -v "^$" | grep -v "already exists" | head -20 || true
-    echo -e "${GREEN}✓ Migrations completed${NC}"
-else
-    echo -e "${YELLOW}No migration SQL found, attempting prisma db push...${NC}"
-    DATABASE_URL="$DATABASE_URL" npx prisma db push --force-reset 2>&1 || true
-fi
+# Prisma 7 removed url from schema — run all SQL migrations directly via psql
+for migration_dir in prisma/migrations/*/; do
+    sql_file="${migration_dir}migration.sql"
+    [[ ! -f "$sql_file" ]] && continue
+    echo "  Applying: $(basename "$migration_dir")"
+    psql "$DATABASE_URL" -f "$sql_file" 2>&1 | grep -v "^$" | grep -v "already exists" | grep -v "does not exist" | grep -v "^NOTICE" | head -10 || true
+done
+echo -e "${GREEN}✓ Migrations completed${NC}"
 
 # ==============================================================================
-# 8. BUILD APPLICATION
+# 8. CREATE ADMIN USER
 # ==============================================================================
-echo -e "\n${YELLOW}[8/8] Building application...${NC}"
+echo -e "\n${YELLOW}[8/9] Creating admin user...${NC}"
+
+ADMIN_ID=$(node -e "console.log(require('crypto').randomUUID())")
+ADMIN_NAME="${ADMIN_NAME:-Admin}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@aegis.local}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9!@#$%' | head -c 20)}"
+ADMIN_INITIALS=$(echo "$ADMIN_NAME" | awk '{for(i=1;i<=NF;i++) printf substr($i,1,1)}' | head -c 3 | tr '[:lower:]' '[:upper:]')
+NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
+
+# Hash password with bcrypt (or SHA-256 fallback)
+HASHED_PASS=$(node -e "
+try {
+  const bcrypt = require('bcryptjs');
+  console.log(bcrypt.hashSync('$ADMIN_PASSWORD', 12));
+} catch(e) {
+  const crypto = require('crypto');
+  console.log(crypto.createHash('sha256').update('$ADMIN_PASSWORD').digest('hex'));
+}
+" 2>/dev/null || node -e "const crypto = require('crypto'); console.log(crypto.createHash('sha256').update('$ADMIN_PASSWORD').digest('hex'))")
+
+psql "$DATABASE_URL" << EOF 2>/dev/null
+INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt", "updatedAt")
+VALUES (
+  '$ADMIN_ID',
+  '$ADMIN_NAME',
+  '$ADMIN_INITIALS',
+  '$ADMIN_EMAIL',
+  '$HASHED_PASS',
+  'admin',
+  'Security',
+  '$NOW',
+  '$NOW'
+)
+ON CONFLICT (email) DO UPDATE SET
+  name = EXCLUDED.name,
+  password = EXCLUDED.password,
+  role = 'admin',
+  "updatedAt" = '$NOW';
+EOF
+
+echo -e "${GREEN}✓ Admin user created${NC}"
+
+# Save credentials to file
+CREDS_FILE="./aegis-credentials.txt"
+cat > "$CREDS_FILE" << CREDS
+AEGIS Admin Credentials
+Generated: $(date)
+==============================
+App URL    : http://localhost:3000
+Admin Email: $ADMIN_EMAIL
+Password   : $ADMIN_PASSWORD
+DB Host    : $DB_HOST:$DB_PORT
+DB Name    : $DB_NAME
+DB User    : $DB_USER
+DB Password: $DB_PASSWORD
+==============================
+CREDS
+chmod 600 "$CREDS_FILE"
+echo -e "${GREEN}✓ Credentials saved to $CREDS_FILE${NC}"
+
+# ==============================================================================
+# 9. BUILD APPLICATION
+# ==============================================================================
+echo -e "\n${YELLOW}[9/10] Building application...${NC}"
 npm run build
 echo -e "${GREEN}✓ Application built${NC}"
 
@@ -240,6 +302,12 @@ cat << "EOF"
 EOF
 echo -e "${NC}\n"
 
+echo -e "${BLUE}Admin Credentials:${NC}"
+echo -e "  Email:    $ADMIN_EMAIL"
+echo -e "  Password: $ADMIN_PASSWORD"
+echo -e "  ${YELLOW}(saved to $CREDS_FILE)${NC}"
+echo ""
+
 echo -e "${BLUE}Database Credentials:${NC}"
 echo -e "  Host:     $DB_HOST:$DB_PORT"
 echo -e "  Database: $DB_NAME"
@@ -250,6 +318,11 @@ echo ""
 if [[ "$DEPLOYMENT_MODE" == "development" ]]; then
     echo -e "${BLUE}Start Development:${NC}"
     echo -e "  ${YELLOW}npm run dev${NC}"
+    echo ""
+    echo -e "${BLUE}Login:${NC}"
+    echo -e "  Open http://localhost:3000"
+    echo -e "  Email: $ADMIN_EMAIL"
+    echo -e "  Password: $ADMIN_PASSWORD"
     echo ""
     echo -e "${BLUE}View Database:${NC}"
     echo -e "  ${YELLOW}npx prisma studio${NC}"
@@ -263,6 +336,8 @@ echo -e "${BLUE}Useful Commands:${NC}"
 echo -e "  ${YELLOW}npx prisma studio${NC}     - View database UI"
 echo -e "  ${YELLOW}npx prisma migrate reset${NC} - Reset database (⚠️ loses data)"
 echo -e "  ${YELLOW}npm run build${NC}          - Build application"
+echo ""
+echo -e "${YELLOW}⚠  Save the credentials file ${CREDS_FILE} — the password won't be shown again${NC}"
 echo ""
 
 # Ask to start dev server
