@@ -10,13 +10,14 @@ type User = { name: string; initials: string; role: string };
 type SidebarProps = { user?: User | null };
 
 const NAV_ITEMS = [
-  { href: '/dashboard', icon: 'dashboard', label: 'Dashboard' },
-  { href: '/projects',  icon: 'projects',  label: 'Projects' },
-  { href: '/library',   icon: 'library',   label: 'Vuln List' },
-  { href: '/reports',   icon: 'reports',   label: 'Reports' },
-  { href: '/team',      icon: 'team',      label: 'Team' },
-  { href: '/portfolio', icon: 'projects',  label: 'Portfolio' },
-  { href: '/audit-trail', icon: 'library', label: 'Audit Trail' },
+  { href: '/dashboard',   icon: 'dashboard', label: 'Dashboard' },
+  { href: '/projects',    icon: 'projects',  label: 'Projects' },
+  { href: '/library',     icon: 'library',   label: 'Vuln List' },
+  { href: '/reports',     icon: 'reports',   label: 'Reports' },
+  { href: '/team',        icon: 'team',      label: 'Team' },
+  { href: '/portfolio',   icon: 'projects',  label: 'Portfolio' },
+  { href: '/audit-trail', icon: 'library',   label: 'Audit Trail' },
+  { href: '/changelog',   icon: 'paper',     label: 'Changelog' },
 ];
 
 export function Sidebar({ user }: SidebarProps) {

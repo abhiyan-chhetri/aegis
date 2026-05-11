@@ -85,8 +85,19 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
+# ── Run database migrations BEFORE build (idempotent, safe to re-run) ────────
+banner "4. Running database migrations"
+for migration_dir in $(ls -d prisma/migrations/*/ 2>/dev/null | sort); do
+  sql_file="${migration_dir}migration.sql"
+  [[ ! -f "$sql_file" ]] && continue
+  info "Applying: $(basename "$migration_dir")"
+  docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" \
+    < "$sql_file" 2>&1 | grep -iv "^$\|already exists\|does not exist\|^NOTICE" | head -5 || true
+done
+success "Migrations completed"
+
 # ── Build app image ───────────────────────────────────────────────────────────
-banner "4. Building app image"
+banner "5. Building app image"
 DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_CONTAINER}:5432/${DB_NAME}"
 
 # Write Dockerfile if it doesn't exist
@@ -136,17 +147,6 @@ DOCKERFILE2
   docker build -f /tmp/aegis-simple.Dockerfile -t "$IMAGE_NAME" .
 }
 success "App image built: $IMAGE_NAME"
-
-# ── Run database migrations (fresh deploy — run all SQL files in order) ───────
-banner "5. Running database migrations"
-for migration_dir in $(ls -d prisma/migrations/*/ 2>/dev/null | sort); do
-  sql_file="${migration_dir}migration.sql"
-  [[ ! -f "$sql_file" ]] && continue
-  info "Applying: $(basename "$migration_dir")"
-  docker exec -i "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" \
-    < "$sql_file" 2>&1 | grep -iv "^$\|already exists\|does not exist\|^NOTICE" | head -5 || true
-done
-success "All migrations applied"
 
 # ── Start app container ───────────────────────────────────────────────────────
 banner "6. Starting app container"
