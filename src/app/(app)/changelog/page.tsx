@@ -2,6 +2,7 @@ import { connection } from 'next/server';
 import React from 'react';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Ico } from '@/components/chrome/icons';
+import { CopyButton } from './CopyButton';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -25,85 +26,102 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
-    version: '1.4.0',
+    version: '1.5.0',
     date: '2026-05-11',
-    title: 'Live Collaboration + Asset Owners',
-    summary: 'Real-time multi-user editing with presence indicators, collaborative notes with conflict resolution, and full asset owner tracking across findings and projects.',
+    title: 'Google Docs-Style Live Editing, Smarter Project Organisation & Full Audit Trail',
+    summary: 'The biggest quality-of-life update yet. Multiple consultants can now edit the same finding or engagement notes at the same time and instantly see each other\'s changes — no more overwriting each other\'s work. Projects are also now organised by client rather than by individual engagement, so the project list stays clean no matter how many years of retests you have.',
     highlight: true,
     changes: [
-      { type: 'new', text: 'Live presence indicators — see who else is viewing the same finding or notes in real time (Google Docs-style stacked avatars)' },
-      { type: 'new', text: 'Collaborative notes with auto-save (1.2 s debounce), 20 s background sync, and conflict resolution banner ("Use theirs / Keep mine") when two people edit simultaneously' },
-      { type: 'new', text: 'Asset Owner field on every finding — tracks which team or system owns the vulnerable component' },
-      { type: 'new', text: 'Asset Owners tab per project — KPI cards (most-exposed owner, avg resolution rate, unresolved count) plus per-owner severity breakdown table with inline finding expansion' },
-      { type: 'new', text: 'Asset owner autocomplete — suggests existing owner names from across all projects when creating or editing findings' },
-      { type: 'new', text: 'Asset owner chip input on new-project form — add/remove owners as chips with datalist suggestions' },
-      { type: 'improved', text: 'New findings are auto-assigned to the creator — no more leaving assignee blank by accident' },
-      { type: 'improved', text: 'Library page: assignee filter dropdown populated dynamically from findings data' },
-      { type: 'improved', text: 'Library page: pagination (25 per page) with page counter and prev/next controls' },
-      { type: 'fixed', text: 'Docker build no longer fails when the database is unavailable at build time' },
-      { type: 'fixed', text: 'Schema migrations now run automatically on server startup (instrumentation hook) — no manual psql commands needed after deploy' },
+      { type: 'new', text: 'Live co-editing for Engagement Notes — when a teammate is typing you see a live "Sarah is typing…" indicator and their changes appear on your screen the moment they save, just like Google Docs' },
+      { type: 'new', text: 'Live co-editing for Findings — if two consultants open the same finding at the same time, each person sees a banner ("John is editing Impact…") so there is no accidental overwriting' },
+      { type: 'new', text: 'Finding comments & activity feed — every finding now has a dedicated Comments section (with @mention support) and a full activity log showing who changed what and when' },
+      { type: 'new', text: 'One card per client on the Projects page — "Apple Website" now appears as a single row regardless of how many yearly retests exist; a badge shows the total engagement count (e.g. "3 engagements")' },
+      { type: 'new', text: 'Year-selector landing page — clicking a client opens a visual card grid of all their engagement years (2024, 2025, 2026 …); clicking a year card goes to that engagement\'s findings and notes' },
+      { type: 'new', text: 'Cleaner URLs — engagement pages now use human-readable addresses like /projects/PEN-222/2026 so links in emails and tickets actually make sense' },
+      { type: 'new', text: 'Clickable breadcrumb trail — every finding and engagement page shows "Projects › PEN-222 › 2025" at the top; each part is a clickable link so you can jump back without hitting the browser back button' },
+      { type: 'new', text: 'Delete actions are now audited — removing a project or finding is recorded in the audit log with the consultant\'s name, timestamp, and what was deleted, so nothing disappears without a trace' },
+      { type: 'improved', text: 'Creating a new project is simpler — the "Target Code" field has been removed from the form; the platform handles grouping automatically behind the scenes' },
+      { type: 'improved', text: 'After creating a project you land on the engagement year overview straight away instead of having to navigate there manually' },
+      { type: 'fixed', text: 'Older projects created before the multi-year update now display correctly as individual cards without any broken links' },
+    ],
+  },
+  {
+    version: '1.4.0',
+    date: '2026-05-11',
+    title: 'Team Awareness, Asset Ownership & Smarter Vulnerability Library',
+    summary: 'You can now see exactly who else is working in the platform at any given moment, track which internal team or system owns each vulnerable asset, and browse the full vulnerability library with faster filters and pages.',
+    changes: [
+      { type: 'new', text: 'Live presence avatars — coloured profile bubbles appear in the top corner of any finding or notes page showing which team members currently have that page open' },
+      { type: 'new', text: 'Conflict resolution banner for notes — if two people edit the same notes at the same time a banner appears asking "Use theirs / Keep mine" so no work is lost' },
+      { type: 'new', text: 'Asset Owner tracking on findings — each finding can be tagged with the client team or system responsible for the vulnerability (e.g. "Payments Platform", "API Gateway"), making remediation hand-offs much clearer' },
+      { type: 'new', text: 'Asset Owners overview tab per project — shows which client teams have the most unresolved vulnerabilities, their average fix rate, and a severity breakdown so consultants know where to focus remediation conversations' },
+      { type: 'new', text: 'Asset owner autocomplete — typing in the owner field suggests names already used across previous engagements, keeping naming consistent' },
+      { type: 'improved', text: 'New findings are automatically assigned to the consultant who created them so nothing is left unassigned by mistake' },
+      { type: 'improved', text: 'Vulnerability library now has an Assignee filter — quickly see all findings assigned to a specific person across every project' },
+      { type: 'improved', text: 'Vulnerability library now paginates at 25 items per page so the page loads fast even with hundreds of findings' },
+      { type: 'fixed', text: 'Platform now applies any missing database updates automatically on startup — no manual database commands required after an update' },
     ],
   },
   {
     version: '1.3.0',
     date: '2026-05-11',
-    title: 'Portfolio MBR Dashboard + Collab Notes',
-    summary: 'Manager-focused Monthly Business Review metrics on the Portfolio page and the first version of per-project collaborative notes sent to AI for context.',
+    title: 'Management Dashboard & AI-Assisted Report Writing',
+    summary: 'A new executive-level dashboard gives managers a monthly business review view of the entire programme at a glance. AI report generation is now smarter, using the team\'s private engagement notes as context to produce more accurate and client-specific content.',
     changes: [
-      { type: 'new', text: 'Portfolio page rebuilt as a manager MBR dashboard: resolution rate, average CVSS, mean time to resolve, report delivery rate, project completion rate, and monthly velocity trend' },
-      { type: 'new', text: 'Per-project Notes tab: private team notes auto-saved and included in AI prompts when generating findings or summaries' },
-      { type: 'new', text: 'Notes sync across team members with 20 s polling and idle-aware conflict detection' },
-      { type: 'improved', text: 'AI finding generation now receives engagement notes as context for higher-quality, client-aware output' },
-      { type: 'improved', text: 'Report prompts upgraded — business impact emphasis, compliance mapping (PCI-DSS, ISO 27001), and executive-ready language' },
+      { type: 'new', text: 'Portfolio / MBR dashboard — one page showing the health of the entire pentest programme: overall resolution rate, average risk score, mean time to fix, how many reports have been delivered on time, and a month-by-month finding velocity chart' },
+      { type: 'new', text: 'Engagement Notes tab — a private scratchpad per project for testers to capture recon observations, client context, and anything the AI should know when writing the report' },
+      { type: 'new', text: 'Notes are shared across the whole team and sync automatically — everyone on the engagement sees the same notes without needing to share documents separately' },
+      { type: 'improved', text: 'AI report generation now reads the engagement notes first, producing executive summaries and finding descriptions that reflect the specific client context rather than generic boilerplate' },
+      { type: 'improved', text: 'AI-generated content now emphasises business impact and compliance relevance (PCI-DSS, ISO 27001) to make reports more useful for client stakeholders' },
     ],
   },
   {
     version: '1.2.0',
     date: '2026-05-10',
-    title: 'Report Approval Workflow',
-    summary: 'Full report lifecycle with draft → in-review → approved/rejected states, reviewer assignment, and webhook notifications for every transition.',
+    title: 'Report Review & Approval Workflow',
+    summary: 'Reports now go through a formal review cycle before they can be marked as final. Every status change triggers an automatic Teams notification so the right person always knows what action is needed.',
     changes: [
-      { type: 'new', text: 'Report status workflow: draft → in-review → approved / rejected' },
-      { type: 'new', text: 'Editing a finalised report automatically reverts it to in-review and notifies a randomly assigned reviewer' },
-      { type: 'new', text: 'Approve / Reject buttons with optional reviewer comment' },
-      { type: 'new', text: 'Report Activity card on Dashboard — shows pending reviews and decisions on your submitted reports' },
-      { type: 'new', text: 'Webhook payloads for all report events: submitted, approved, rejected, reverted to review' },
-      { type: 'improved', text: 'Reports page filter fixed — counts and filter chips now reflect live data correctly' },
-      { type: 'fixed', text: 'Each project enforces a single report — duplicate report creation is now prevented' },
+      { type: 'new', text: 'Four-stage report lifecycle — Draft → Submitted for Review → Approved / Rejected — ensuring every report is reviewed before delivery to the client' },
+      { type: 'new', text: 'If a consultant edits a report that has already been approved, it is automatically moved back to "In Review" and a reviewer is notified, preventing unapproved changes from going out' },
+      { type: 'new', text: 'Reviewers can approve or reject with a written comment, giving clear written feedback the author can act on' },
+      { type: 'new', text: 'Dashboard activity card — shows each consultant which of their reports are waiting for review and what feedback has been left on previously submitted reports' },
+      { type: 'new', text: 'Automatic Teams / Slack webhook notifications for every report status change so the team is always informed without checking the platform manually' },
+      { type: 'improved', text: 'Report status filters now show accurate counts that update in real time' },
+      { type: 'fixed', text: 'A bug that occasionally allowed duplicate report drafts to be created for the same project has been resolved' },
     ],
   },
   {
     version: '1.1.0',
     date: '2026-05-09',
-    title: 'Docker Deploy + One-Command Setup',
-    summary: 'Production-ready Docker deployment script that spins up PostgreSQL, builds the app, applies migrations, and seeds the first admin account in one command.',
+    title: 'One-Command Production Deployment',
+    summary: 'The platform can now be stood up on a fresh server in a single command. Everything — the database, the application, and the first admin account — is created and configured automatically.',
     changes: [
-      { type: 'new', text: 'docker-deploy.sh: single-file production deploy — PostgreSQL container, network, migrations, app container, admin seed, credential file' },
-      { type: 'new', text: 'Auto-generated secure admin password saved to aegis-credentials.txt (chmod 600)' },
-      { type: 'new', text: 'Demo credentials no longer shown on the login page in production builds' },
-      { type: 'new', text: 'New finding redirect fixed — POST response now returns the correct finding ID for navigation' },
-      { type: 'improved', text: 'Webhook messages reformatted with rich HTML, severity emoji, CVSS score, assigned user, and timestamp' },
-      { type: 'improved', text: 'Migrations are idempotent (IF NOT EXISTS) and run in order before the app build' },
+      { type: 'new', text: 'Single-command Docker deployment — running one script sets up the database, builds and starts the application, creates the first admin account, and saves all credentials to a secure local file' },
+      { type: 'new', text: 'Credentials file (aegis-credentials.txt) is generated automatically on first deploy with a strong random password, saved with restricted file permissions' },
+      { type: 'new', text: 'Login page no longer shows demo credentials in production mode' },
+      { type: 'improved', text: 'Teams / Slack webhook notifications now include severity emoji, CVSS score, assigned consultant, and exact timestamp for richer context' },
+      { type: 'improved', text: 'All database migration steps are safe to re-run — deploying an update will never fail because a column or table already exists' },
+      { type: 'fixed', text: 'Saving a new finding now correctly redirects to the finding detail page instead of showing an error' },
     ],
   },
   {
     version: '1.0.0',
     date: '2026-05-05',
-    title: 'Initial Release',
-    summary: 'Core penetration test reporting platform with project management, finding editor, report generation, team management, and audit trail.',
+    title: 'Initial Launch',
+    summary: 'AEGIS is live. A purpose-built platform for the penetration testing team that replaces Word documents and spreadsheets with a structured, searchable, and audited workflow — from scoping to final report delivery.',
     changes: [
-      { type: 'new', text: 'Project management: create, edit, and track engagements with status, dates, scope, and team members' },
-      { type: 'new', text: 'Finding editor: severity, CVSS, CWE/OWASP mapping, affected assets, reproduction steps, impact, and remediation' },
-      { type: 'new', text: 'Evidence uploads: attach screenshots and files to findings' },
-      { type: 'new', text: 'AI-powered report generation: GPT-style prompts produce executive summaries, finding narratives, and remediation guidance' },
-      { type: 'new', text: 'Report templates: reusable templates with custom sections and placeholders' },
-      { type: 'new', text: 'Vulnerability library: cross-project finding list with severity/status/project filters' },
-      { type: 'new', text: 'Team management: user roles (admin, lead, analyst), project assignment, and activity feed' },
-      { type: 'new', text: 'Audit trail: full history of every create/edit/status change across all projects' },
-      { type: 'new', text: 'Dashboard: active projects, open findings breakdown, severity trend chart, upcoming deadlines, team load' },
-      { type: 'new', text: 'Mentions: @-mention teammates in finding comments, with notification badge on Dashboard' },
-      { type: 'new', text: 'Webhook integration: configurable webhook for finding and report events (Teams/Slack compatible)' },
-      { type: 'new', text: 'Dark-first editorial UI with configurable accent colours and severity palettes' },
+      { type: 'new', text: 'Project management — create and track engagements with client name, scope, dates, lead consultant, and team members; filter by status at a glance' },
+      { type: 'new', text: 'Structured finding editor — capture every vulnerability with severity rating, CVSS score, CWE and OWASP classification, affected assets, reproduction steps, business impact, and remediation advice' },
+      { type: 'new', text: 'Evidence attachments — upload screenshots, request/response captures, and supporting files directly onto each finding' },
+      { type: 'new', text: 'AI-assisted report writing — describe a vulnerability and the AI generates professional-quality summary, impact, and remediation text in seconds, which consultants then review and edit' },
+      { type: 'new', text: 'Report templates — create reusable report structures so every engagement follows the same format without starting from scratch each time' },
+      { type: 'new', text: 'Vulnerability library — a cross-project searchable list of every finding ever recorded, filterable by severity, status, project, and assignee' },
+      { type: 'new', text: 'Team management — role-based access (Admin, Lead, Analyst), per-project team assignment, and individual workload visibility' },
+      { type: 'new', text: 'Audit trail — a tamper-evident log of every action taken in the platform: who created, edited, or changed the status of any finding or project, and when' },
+      { type: 'new', text: 'Dashboard — at-a-glance view of active projects, open vulnerability counts by severity, a 12-week risk trend chart, approaching deadlines, and team workload' },
+      { type: 'new', text: '@mention comments on findings — tag a teammate in a comment to flag something for their attention; they see a notification badge on their dashboard' },
+      { type: 'new', text: 'Webhook integration — connects to Microsoft Teams or Slack to send real-time alerts whenever a finding is resolved, a severity changes, or a report status changes' },
+      { type: 'new', text: 'Dark-mode editorial interface designed for long reporting sessions, with configurable colour accents' },
     ],
   },
 ];
@@ -143,9 +161,22 @@ export default async function ChangelogPage() {
   const newFeatures  = RELEASES.reduce((acc, r) => acc + r.changes.filter(c => c.type === 'new').length, 0);
   const fixes        = RELEASES.reduce((acc, r) => acc + r.changes.filter(c => c.type === 'fixed').length, 0);
 
+  const confluenceText = RELEASES.map(r => {
+    const typeLabel: Record<string, string> = { new: '(+)', improved: '(~)', fixed: '(!)', security: '(!) SECURITY', breaking: '(x) BREAKING' };
+    const lines = [
+      `h2. v${r.version} — ${r.title} (${r.date})`,
+      r.summary,
+      '',
+      ...r.changes.map(c => `* ${typeLabel[c.type] || c.type} ${c.text}`),
+      '',
+      '----',
+    ];
+    return lines.join('\n');
+  }).join('\n');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <Topbar title="Changelog" breadcrumb={['Aegis', 'Changelog']} />
+      <Topbar title="Changelog" breadcrumb={['Aegis', 'Changelog']} actions={<CopyButton text={confluenceText} />} />
 
       <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto' }}>
         <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 28px 64px' }}>

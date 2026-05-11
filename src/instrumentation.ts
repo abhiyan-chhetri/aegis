@@ -23,6 +23,31 @@ export async function register() {
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "targetCode" TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementYear" TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "previousEngagementId" TEXT DEFAULT NULL`,
+      // Activity feed for findings (status changes, edits, comments)
+      `CREATE TABLE IF NOT EXISTS "Activity" (
+        id TEXT PRIMARY KEY,
+        "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        "findingId" TEXT REFERENCES "Finding"(id) ON DELETE CASCADE,
+        "projectId" TEXT REFERENCES "Project"(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        target TEXT NOT NULL DEFAULT '',
+        detail TEXT NOT NULL DEFAULT '',
+        badge TEXT NOT NULL DEFAULT '',
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS "Activity_findingId_idx" ON "Activity"("findingId")`,
+      `CREATE INDEX IF NOT EXISTS "Activity_projectId_idx" ON "Activity"("projectId")`,
+      // Comments on findings with @mentions
+      `CREATE TABLE IF NOT EXISTS "FindingComment" (
+        id TEXT PRIMARY KEY,
+        "findingId" TEXT NOT NULL REFERENCES "Finding"(id) ON DELETE CASCADE,
+        "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        mentions TEXT NOT NULL DEFAULT '[]',
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS "FindingComment_findingId_idx" ON "FindingComment"("findingId")`,
     ];
 
     for (const sql of migrations) {

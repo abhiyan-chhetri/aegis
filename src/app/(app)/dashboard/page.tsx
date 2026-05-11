@@ -25,21 +25,6 @@ function openCounts(findings: { severity: string; status: string }[]) {
   return sevCounts(open);
 }
 
-// Made-up trend data — 12 weeks
-const TREND_DATA: { critical: number; high: number; medium: number; low: number }[] = [
-  { critical: 3, high: 7, medium: 11, low: 6 },
-  { critical: 4, high: 8, medium: 9,  low: 7 },
-  { critical: 2, high: 6, medium: 13, low: 5 },
-  { critical: 5, high: 9, medium: 10, low: 8 },
-  { critical: 6, high: 11, medium: 8, low: 6 },
-  { critical: 4, high: 8, medium: 12, low: 9 },
-  { critical: 7, high: 12, medium: 9, low: 7 },
-  { critical: 5, high: 10, medium: 14, low: 5 },
-  { critical: 3, high: 7, medium: 11, low: 8 },
-  { critical: 8, high: 13, medium: 10, low: 6 },
-  { critical: 6, high: 9, medium: 12, low: 9 },
-  { critical: 4, high: 8, medium: 9,  low: 7 },
-];
 
 // ─── server component ────────────────────────────────────────────────────────
 
@@ -131,7 +116,50 @@ export default async function DashboardPage() {
   const openFindings = allFindings.filter((f: any) => f.status !== 'resolved' && f.status !== 'accepted');
   const criticalOpen = openFindings.filter((f: any) => f.severity === 'critical').length;
 
-  const maxTrendVal = Math.max(...TREND_DATA.map(d => d.critical + d.high + d.medium + d.low));
+  // Compute finding counts per week (last 12 weeks) from actual DB
+  const twelveWeeksAgo = new Date();
+  twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84); // 12 * 7
+
+  const weeklyFindings = await db.$queryRawUnsafe<{ week_start: Date; severity: string; count: bigint }[]>(`
+    SELECT
+      date_trunc('week', "createdAt") AS week_start,
+      severity,
+      COUNT(*) AS count
+    FROM "Finding"
+    WHERE "createdAt" >= $1
+    GROUP BY week_start, severity
+    ORDER BY week_start ASC
+  `, twelveWeeksAgo);
+
+  // Build 12-week grid
+  const trendData: { critical: number; high: number; medium: number; low: number }[] = [];
+  for (let w = 11; w >= 0; w--) {
+    const weekStart = new Date();
+    weekStart.setDate(weekStart.getDate() - w * 7);
+    weekStart.setHours(0, 0, 0, 0);
+    // find monday of that week
+    const day = weekStart.getDay();
+    const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
+    weekStart.setDate(diff);
+    const weekKey = weekStart.toISOString().slice(0, 10);
+
+    const weekRows = weeklyFindings.filter(r => {
+      const d = new Date(r.week_start);
+      d.setHours(0, 0, 0, 0);
+      const k = d.toISOString().slice(0, 10);
+      return k === weekKey;
+    });
+
+    const point = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const r of weekRows) {
+      const n = Number(r.count);
+      if (r.severity === 'critical') point.critical = n;
+      else if (r.severity === 'high') point.high = n;
+      else if (r.severity === 'medium') point.medium = n;
+      else if (r.severity === 'low') point.low = n;
+    }
+    trendData.push(point);
+  }
 
   // Team load: group by lead
   type TeamEntry = { user: any; count: number; findings: number };
@@ -280,7 +308,7 @@ export default async function DashboardPage() {
             </section>
 
             {/* Severity Trend chart */}
-            <SeverityTrendChart data={TREND_DATA} />
+            <SeverityTrendChart data={trendData} />
 
             {/* Activity Feed */}
             <section className="card" style={{ overflow: 'hidden' }}>

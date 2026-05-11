@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
     await db.$executeRawUnsafe(
       `UPDATE "Project" SET members = $1, "assetOwners" = $2, "targetCode" = $3, "engagementYear" = $4, "previousEngagementId" = $5 WHERE id = $6`,
       membersJson, assetOwnersJson,
-      targetCode || '',
+      targetCode || code,
       engagementYear || '',
       previousEngagementId || null,
       project.id

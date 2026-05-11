@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { sendWebhook } from '@/lib/webhook';
+import { broadcast } from '@/lib/broadcaster';
+import { v4 as uuidv4 } from 'uuid';
 
 // All content fields that we manage via raw SQL (bypasses Prisma schema validation entirely)
 // This includes executiveSummary even though it's in the original schema — raw SQL is safer
@@ -182,6 +184,17 @@ export async function PATCH(
       ),
     ]);
 
+    // ── Broadcast notes change to SSE subscribers ─────────────────────────────
+    if (notes !== undefined) {
+      broadcast(`notes:${id}`, {
+        type: 'notes_update',
+        notes: String(notes),
+        userId: session.id,
+        userName: (session as any).name || 'Someone',
+        ts: Date.now(),
+      });
+    }
+
     // ── Revert report status when project content changes ────────────────────
     // approved (final) → in-review with random team member assigned as reviewer
     // in-review / rejected → draft so author re-submits
@@ -271,7 +284,22 @@ export async function DELETE(
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
+
+    // Grab project name before deleting for the audit log
+    const proj = await db.project.findUnique({ where: { id }, select: { name: true, code: true } });
+
     await db.project.delete({ where: { id } });
+
+    // Audit log
+    try {
+      await db.$executeRawUnsafe(
+        `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        uuidv4(), session.id, 'delete', 'Project', id,
+        JSON.stringify({ name: proj?.name, code: proj?.code }),
+        new Date().toISOString()
+      );
+    } catch { /* non-critical */ }
+
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     console.error('[DELETE /api/projects/[id]]', error);

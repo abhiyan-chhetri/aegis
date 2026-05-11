@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { sendWebhook } from '@/lib/webhook';
+import { broadcast } from '@/lib/broadcaster';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(
   _request: NextRequest,
@@ -234,6 +236,18 @@ export async function PATCH(
       }
     }
 
+    // ── Broadcast finding change to SSE subscribers ───────────────────────────
+    try {
+      broadcast(`finding:${id}`, {
+        type: 'field_update',
+        fields: updateData,
+        changes,
+        userId: session.id,
+        userName: (session as any).name || 'Someone',
+        ts: Date.now(),
+      });
+    } catch { /* non-critical */ }
+
     return NextResponse.json({ finding });
   } catch (error: unknown) {
     console.error('[PATCH /api/findings/[id]]', error);
@@ -261,7 +275,23 @@ export async function DELETE(
 
     const { id } = await params;
 
+    // Grab finding info before deleting for audit log
+    const finding = await db.finding.findUnique({
+      where: { id },
+      select: { title: true, code: true, severity: true, projectId: true },
+    });
+
     await db.finding.delete({ where: { id } });
+
+    // Audit log
+    try {
+      await db.$executeRawUnsafe(
+        `INSERT INTO "AuditLog" (id, "userId", action, "entityType", "entityId", changes, "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        uuidv4(), session.id, 'delete', 'Finding', id,
+        JSON.stringify({ title: finding?.title, code: finding?.code, severity: finding?.severity, projectId: finding?.projectId }),
+        new Date().toISOString()
+      );
+    } catch { /* non-critical */ }
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

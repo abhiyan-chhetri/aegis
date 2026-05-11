@@ -5,47 +5,21 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Ico } from '@/components/chrome/icons';
-import { ProjectTabs } from './ProjectTabs';
-import { EngagementYearSelector } from './EngagementYearSelector';
+import { ProjectTabs } from '../ProjectTabs';
 
-type Props = { params: Promise<{ id: string }> };
+// /projects/[id]/[engId]
+// [id]    = the targetCode / project code slug  (e.g. PEN-222)
+// [engId] = the engagement UUID
+type Props = { params: Promise<{ id: string; engId: string }> };
 
-
-export default async function ProjectPage({ params }: Props) {
+export default async function EngagementDetailPage({ params }: Props) {
   await connection();
-  const { id: slug } = await params;
+  const { id: slug, engId } = await params;
 
-  // ── Look up by code OR targetCode ─────────────────────────────────────────
-  // slug is the URL segment — could be a unique project code or a shared targetCode
-  const engagementRows = await db.$queryRawUnsafe<any[]>(`
-    SELECT p.id, p.code, p.name, p.status,
-           COALESCE(p."targetCode",'') AS "targetCode",
-           COALESCE(p."engagementYear",'') AS "engagementYear",
-           p."startDate", p."endDate",
-           COUNT(f.id)::int AS "findingCount",
-           COUNT(CASE WHEN f.status = 'resolved' THEN 1 END)::int AS "resolvedCount"
-    FROM "Project" p
-    LEFT JOIN "Finding" f ON f."projectId" = p.id
-    WHERE p."targetCode" = $1 OR p.code = $1 OR p.id = $1
-    GROUP BY p.id, p.code, p.name, p.status, p."targetCode", p."engagementYear", p."startDate", p."endDate"
-    ORDER BY COALESCE(p."engagementYear",'') DESC NULLS LAST, p."startDate" DESC
-  `, slug);
-
-  if (engagementRows.length === 0) notFound();
-
-  // ── Multiple engagements under same targetCode → year selector ────────────
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const navigatedByUUID = UUID_RE.test(slug) && engagementRows.length === 1 && engagementRows[0].id === slug;
-  if (!navigatedByUUID) {
-    return <EngagementYearSelector engagements={engagementRows} slug={slug} />;
-  }
-
-  // ── Single engagement — render full project detail ────────────────────────
-  const projectId = engagementRows[0].id;
-
+  // Load the specific engagement by UUID
   const [project, allUsers, rawRows, engRows] = await Promise.all([
     db.project.findUnique({
-      where: { id: projectId },
+      where: { id: engId },
       include: {
         lead: true,
         findings: { include: { assignee: true }, orderBy: { createdAt: 'desc' } },
@@ -57,17 +31,17 @@ export default async function ProjectPage({ params }: Props) {
       select: { id: true, name: true, initials: true, role: true, email: true },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT "executiveSummary", methodology, "attackNarrative", members, COALESCE(notes, '') as notes FROM "Project" WHERE id = $1`, projectId
+      `SELECT "executiveSummary", methodology, "attackNarrative", members, COALESCE(notes, '') as notes FROM "Project" WHERE id = $1`, engId
     ),
     db.$queryRawUnsafe<any[]>(
-      `SELECT COALESCE("targetCode",'') AS "targetCode", COALESCE("engagementYear",'') AS "engagementYear", "previousEngagementId" FROM "Project" WHERE id = $1`, projectId
+      `SELECT COALESCE("targetCode",'') AS "targetCode", COALESCE("engagementYear",'') AS "engagementYear", "previousEngagementId" FROM "Project" WHERE id = $1`, engId
     ),
   ]);
 
   if (!project) notFound();
 
   // Fetch review data for reports
-  const reportIds = project?.reports?.map((r: any) => r.id) ?? [];
+  const reportIds = project.reports?.map((r: any) => r.id) ?? [];
   const reportReviewData: Record<string, { reviewComment: string; reviewedAt: string | null; reviewerId: string | null }> = {};
   if (reportIds.length > 0) {
     const placeholders = reportIds.map((_: any, i: number) => `$${i + 1}`).join(',');
@@ -87,9 +61,10 @@ export default async function ProjectPage({ params }: Props) {
   const rawExtra = rawRows[0] ?? {};
   const engExtra = engRows[0] ?? { targetCode: '', engagementYear: '', previousEngagementId: null };
 
-  // Fetch engagement siblings
+  // Fetch engagement siblings (other engagements under the same target)
   let engagementSiblings: any[] = [];
-  if (engExtra.targetCode) {
+  const effectiveTargetCode = engExtra.targetCode || slug;
+  if (effectiveTargetCode) {
     const siblings = await db.$queryRawUnsafe<any[]>(`
       SELECT p.id, p.code, p.name, p.status,
              COALESCE(p."engagementYear",'') AS "engagementYear",
@@ -101,11 +76,11 @@ export default async function ProjectPage({ params }: Props) {
       WHERE p."targetCode" = $1
       GROUP BY p.id, p.code, p.name, p.status, p."engagementYear", p."startDate", p."endDate"
       ORDER BY COALESCE(p."engagementYear",'') DESC, p."startDate" DESC
-    `, engExtra.targetCode);
-    engagementSiblings = siblings.map((s: any) => ({ ...s, isCurrent: s.id === projectId }));
+    `, effectiveTargetCode);
+    engagementSiblings = siblings.map((s: any) => ({ ...s, isCurrent: s.id === engId }));
   }
 
-  // Fetch carry-over findings
+  // Fetch carry-over findings from previous engagement
   let carryoverFindings: any[] = [];
   if (engExtra.previousEngagementId) {
     carryoverFindings = await db.$queryRawUnsafe<any[]>(`
@@ -144,29 +119,31 @@ export default async function ProjectPage({ params }: Props) {
     });
   } catch { scopeRows = []; }
 
-  // Use the targetCode or code as the back-link slug
-  const backSlug = engExtra.targetCode || project.code;
+  // Back link goes to the year selector for this slug
+  const backSlug = slug;
+  const yearLabel = engExtra.engagementYear || project.code;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <Topbar
         breadcrumb={[
           { label: 'Projects', href: '/projects' },
-          project.name,
+          { label: slug, href: `/projects/${slug}` },
+          yearLabel,
         ]}
         title={project.name}
-        subtitle={`${project.engagement} · ${engExtra.engagementYear || project.code}`}
+        subtitle={`${(project as any).engagement} · ${yearLabel}`}
         actions={
           <>
-            <Link href={`/projects/${projectId}/edit`} className="btn btn-ghost btn-sm">
+            <Link href={`/projects/${engId}/edit`} className="btn btn-ghost btn-sm">
               <Ico name="settings" size={14} />
               Edit
             </Link>
-            <Link href={`/projects/${projectId}/report`} className="btn btn-ghost btn-sm">
+            <Link href={`/projects/${engId}/report`} className="btn btn-ghost btn-sm">
               <Ico name="paper" size={14} />
               Preview report
             </Link>
-            <Link href={`/projects/${projectId}/findings/new`} className="btn btn-primary btn-sm">
+            <Link href={`/projects/${engId}/findings/new`} className="btn btn-primary btn-sm">
               <Ico name="plus" size={14} />
               Add finding
             </Link>

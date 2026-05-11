@@ -113,6 +113,7 @@ function AIOverlay({ phase, onClose }: { phase: AIPhase; onClose: () => void }) 
           0% { opacity: 0.9; transform: scale(1); }
           100% { opacity: 0; transform: scale(0) translateY(-30px); }
         }
+        @keyframes noteDot { 0%,80%,100%{transform:scale(0);opacity:0.3} 40%{transform:scale(1);opacity:1} }
       `}</style>
     </div>
   );
@@ -322,7 +323,6 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   const [remediation,   setRemediation]   = useState(finding?.remediation||'');
   const [references,    setReferences]    = useState(finding?.references||'');
   const [affectedAssets,setAffectedAssets]= useState(Array.isArray(assets)?assets.join('\n'):'');
-  const [assetOwner,    setAssetOwner]    = useState(finding?.assetOwner||'');
   const [editorTab,     setEditorTab]     = useState<'Write'|'Preview'>('Write');
   const [fieldTab,      setFieldTab]      = useState<FieldTab>('Description');
   const [saving,        setSaving]        = useState(false);
@@ -369,6 +369,87 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       .then(d=>{ if(d.evidence) setEvidence(d.evidence); })
       .catch(()=>{});
   },[finding?.id]);
+
+  // ── Real-time collaboration via SSE ──────────────────────────────────────────
+  // typers: { [fieldName]: { userName, userColor } }
+  const [fieldTypers, setFieldTypers] = useState<Record<string, { userName: string; userColor: string }>>({});
+  const typingThrottle = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(()=>{
+    if (!finding?.id || !isEditing) return;
+    const es = new EventSource(`/api/collab/finding:${finding.id}`);
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Remote typing indicator
+        if (data.type === 'typing') {
+          setFieldTypers(prev => {
+            const next = { ...prev };
+            if (data.field === null) {
+              delete next[`${data.userId}`];
+            } else {
+              next[`${data.userId}_${data.field}`] = { userName: data.userName, userColor: data.userColor };
+            }
+            return next;
+          });
+          // Auto-expire after 3.5s
+          if (data.field !== null) {
+            const key = `${data.userId}_${data.field}`;
+            const existing = typingThrottle.current[`expire_${key}`];
+            if (existing) clearTimeout(existing);
+            typingThrottle.current[`expire_${key}`] = setTimeout(() => {
+              setFieldTypers(prev => {
+                const next = { ...prev };
+                delete next[key];
+                return next;
+              });
+            }, 3500);
+          }
+        }
+
+        // Remote field update — apply if we're not editing that field
+        if (data.type === 'field_update' && data.fields) {
+          const f = data.fields as Record<string, unknown>;
+          if (f.title !== undefined)       setTitle(String(f.title));
+          if (f.severity !== undefined)    setSeverity(String(f.severity));
+          if (f.status !== undefined)      setStatus(String(f.status));
+          if (f.cwe !== undefined)         setCwe(String(f.cwe));
+          if (f.owasp !== undefined)       setOwasp(String(f.owasp));
+          if (f.description !== undefined) setDescription(String(f.description));
+          if (f.reproduction !== undefined)setReproduction(String(f.reproduction));
+          if (f.impact !== undefined)      setImpact(String(f.impact));
+          if (f.remediation !== undefined) setRemediation(String(f.remediation));
+          if (f.references !== undefined)  setReferences(String(f.references));
+        }
+      } catch { /* ignore */ }
+    };
+
+    return () => { es.close(); };
+  }, [finding?.id, isEditing]);
+
+  // Broadcast typing state for a given field (throttled to every 2s)
+  function broadcastTyping(field: string) {
+    if (!finding?.id) return;
+    const key = `throttle_${field}`;
+    if (typingThrottle.current[key]) return;
+    fetch(`/api/collab/finding:${finding.id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field }),
+    }).catch(() => {});
+    typingThrottle.current[key] = setTimeout(() => {
+      delete typingThrottle.current[key];
+    }, 2000);
+  }
+
+  // Helper: get typers for a field across all users
+  function getTypersForField(field: string): string[] {
+    return Object.entries(fieldTypers)
+      .filter(([k]) => k.endsWith(`_${field}`))
+      .map(([, v]) => v.userName);
+  }
 
   // AI generate finding
   const generateWithAI = useCallback(async () => {
@@ -592,7 +673,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         await fetch(`/api/findings/${finding.id}`,{
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
-            title,severity,status,cwe,owasp,assetOwner,description,reproduction,impact,remediation,references,
+            title,severity,status,cwe,owasp,description,reproduction,impact,remediation,references,
             assets:affectedAssets.split('\n').map(a=>a.trim()).filter(Boolean),
             cvss:cvssScore,
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
@@ -603,7 +684,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         const res = await fetch(`/api/projects/${projectId}/findings`,{
           method:'POST', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
-            title:title.trim(),severity,description:description.trim(),cwe:cwe.trim(),owasp:owasp.trim(),assetOwner:assetOwner.trim(),
+            title:title.trim(),severity,description:description.trim(),cwe:cwe.trim(),owasp:owasp.trim(),
             assets:affectedAssets.split('\n').map(a=>a.trim()).filter(Boolean),
             reproduction:reproduction.trim(),impact:impact.trim(),remediation:remediation.trim(),references:references.trim(),
             cvss:cvssScore,
@@ -638,7 +719,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       {/* Title */}
       <div style={{padding:'14px 20px',borderBottom:'1px solid var(--line-1)',background:'var(--bg-0)',flexShrink:0,display:'flex',alignItems:'center',gap:12}}>
         <input
-          value={title} onChange={e=>setTitle(e.target.value)}
+          value={title} onChange={e=>{ setTitle(e.target.value); broadcastTyping('title'); }}
           placeholder="Finding title…"
           autoFocus
           style={{flex:1,fontSize:18,fontWeight:500,color:'var(--ink-0)',background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}
@@ -753,19 +834,29 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             )}
 
             {editorTab==='Write' ? (
-              <textarea
-                ref={textareaRef}
-                value={currentValue()}
-                onChange={e=>setCurrentValue(e.target.value)}
-                onPaste={handlePaste}
-                placeholder={`Write ${fieldTab.toLowerCase()} in Markdown…\n\nTip: paste or drag-and-drop screenshots — they'll upload automatically and insert a reference.`}
-                style={{
-                  display:'block',width:'100%',height:'100%',minHeight:240,
-                  padding:'20px 24px',background:'var(--bg-0)',border:'none',outline:'none',
-                  color:'var(--ink-1)',fontFamily:'var(--font-mono)',fontSize:13.5,
-                  lineHeight:1.75,resize:'none',boxSizing:'border-box',
-                }}
-              />
+              <>
+                {getTypersForField(fieldTab.toLowerCase()).length > 0 && (
+                  <div style={{ padding: '4px 24px', background: 'color-mix(in srgb, var(--accent) 8%, transparent)', fontSize: 11, color: 'var(--accent)', borderBottom: '1px solid color-mix(in srgb, var(--accent) 20%, transparent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ display: 'inline-flex', gap: 2 }}>
+                      {[0,1,2].map(i => <span key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', animation: `noteDot 1.2s ${i*0.2}s ease-in-out infinite` }} />)}
+                    </span>
+                    {getTypersForField(fieldTab.toLowerCase()).join(', ')} {getTypersForField(fieldTab.toLowerCase()).length === 1 ? 'is' : 'are'} editing {fieldTab}…
+                  </div>
+                )}
+                <textarea
+                  ref={textareaRef}
+                  value={currentValue()}
+                  onChange={e=>{ setCurrentValue(e.target.value); broadcastTyping(fieldTab.toLowerCase()); }}
+                  onPaste={handlePaste}
+                  placeholder={`Write ${fieldTab.toLowerCase()} in Markdown…\n\nTip: paste or drag-and-drop screenshots — they'll upload automatically and insert a reference.`}
+                  style={{
+                    display:'block',width:'100%',height:'100%',minHeight:240,
+                    padding:'20px 24px',background:'var(--bg-0)',border:'none',outline:'none',
+                    color:'var(--ink-1)',fontFamily:'var(--font-mono)',fontSize:13.5,
+                    lineHeight:1.75,resize:'none',boxSizing:'border-box',
+                  }}
+                />
+              </>
             ) : (
               <div
                 style={{padding:'20px 28px',maxWidth:740,color:'var(--ink-0)',fontSize:14,lineHeight:1.7}}
@@ -937,22 +1028,6 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
                 <textarea className="input" value={affectedAssets} onChange={e=>setAffectedAssets(e.target.value)} placeholder="One per line" style={{width:'100%',fontFamily:'var(--font-mono)',fontSize:11,minHeight:70,resize:'vertical'}}/>
               </div>
 
-              <div className="form-group">
-                <label className="form-label">Asset Owner</label>
-                <input
-                  className="input"
-                  list="asset-owner-suggestions"
-                  value={assetOwner}
-                  onChange={e=>setAssetOwner(e.target.value)}
-                  placeholder="e.g. Payments Team, API Platform…"
-                  style={{width:'100%'}}
-                />
-                {ownerSuggestions.length > 0 && (
-                  <datalist id="asset-owner-suggestions">
-                    {ownerSuggestions.map(s => <option key={s} value={s} />)}
-                  </datalist>
-                )}
-              </div>
             </div>
           </div>
 

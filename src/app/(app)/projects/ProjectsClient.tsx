@@ -13,6 +13,9 @@ type ProjectRow = {
   engagement: string;
   status: string;
   progress: number;
+  targetCode?: string;
+  slug?: string;
+  engagementCount?: number;
   lead: { id: string; name: string; initials: string };
   counts: Record<string, number>;
 };
@@ -170,9 +173,21 @@ export function ProjectsClient({ projects, statusStats }: Props) {
                     </span>
                   </td>
                   <td>
-                    <Link href={`/projects/${p.id}`} style={{ color: 'var(--ink-0)', textDecoration: 'none', fontWeight: 500, fontSize: 13 }}>
-                      {p.name}
-                    </Link>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Link href={`/projects/${p.slug || p.targetCode || p.code || p.id}`} style={{ color: 'var(--ink-0)', textDecoration: 'none', fontWeight: 500, fontSize: 13 }}>
+                        {p.name}
+                      </Link>
+                      {(p.engagementCount ?? 1) > 1 && (
+                        <span title={`${p.engagementCount} engagements`} style={{
+                          fontSize: 10, fontFamily: 'var(--font-mono)',
+                          background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+                          color: 'var(--accent)', border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
+                          borderRadius: 100, padding: '1px 7px', whiteSpace: 'nowrap',
+                        }}>
+                          {p.engagementCount} engagements
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td>
                     <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>{p.engagement}</span>
@@ -202,7 +217,7 @@ export function ProjectsClient({ projects, statusStats }: Props) {
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 2 }}>
-                      <Link href={`/projects/${p.id}`} className="btn btn-ghost btn-sm" style={{ padding: '0 8px' }} title="View project">
+                      <Link href={`/projects/${p.slug || p.targetCode || p.code || p.id}`} className="btn btn-ghost btn-sm" style={{ padding: '0 8px' }} title="View project">
                         <Ico name="chevRight" size={13} />
                       </Link>
                       <button

@@ -221,7 +221,10 @@ export function NewProjectForm({ users, existingOwners }: Props) {
         throw new Error(data?.error || `HTTP ${res.status}`);
       }
       const created = await res.json();
-      router.push(`/projects/${created.project?.id ?? created.id}`);
+      // Redirect to year selector (targetCode || code) so user lands on the engagement cards view
+      const proj = created.project ?? created;
+      const redirectSlug = targetCode || proj.code || proj.id;
+      router.push(`/projects/${encodeURIComponent(redirectSlug)}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create project');
       setSaving(false);
@@ -378,26 +381,8 @@ export function NewProjectForm({ users, existingOwners }: Props) {
         </select>
       </div>
 
-      {/* Target Code + Engagement Year */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
-        <div className="form-group">
-          <label className="form-label" htmlFor="proj-targetCode">
-            Target Code
-            <span style={{ fontWeight: 400, color: 'var(--ink-3)', marginLeft: 6 }}>(optional)</span>
-          </label>
-          <input
-            id="proj-targetCode"
-            className="input"
-            type="text"
-            placeholder="e.g. WEBAPP-CORP"
-            value={targetCode}
-            onChange={e => setTargetCode(e.target.value.toUpperCase())}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, height: 38 }}
-          />
-          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-            Group yearly engagements for the same target
-          </div>
-        </div>
+      {/* Engagement Year (Target Code is auto-set = code server-side) */}
+      <div style={{ marginBottom: 20 }}>
         <div className="form-group">
           <label className="form-label" htmlFor="proj-engYear">Engagement Year</label>
           <input
@@ -407,10 +392,10 @@ export function NewProjectForm({ users, existingOwners }: Props) {
             placeholder={String(new Date().getFullYear())}
             value={engagementYear}
             onChange={e => setEngagementYear(e.target.value)}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, height: 38 }}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, height: 38, maxWidth: 200 }}
           />
           <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
-            e.g. 2025 or "Q1 2025"
+            e.g. 2025 or &ldquo;Q1 2025&rdquo; — used on the engagement year selector
           </div>
         </div>
       </div>

@@ -1,10 +1,11 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { Ico } from './icons';
 import { CommandPaletteButton } from './CommandPalette';
 
-type BreadcrumbItem = string;
+type BreadcrumbItem = string | { label: string; href: string };
 
 type TopbarProps = {
   title?: string;
@@ -20,12 +21,24 @@ export function Topbar({ title, subtitle, breadcrumb, actions, showSearch = true
       <div style={{ flex: 1, minWidth: 0 }}>
         {breadcrumb && (
           <div style={styles.crumbs}>
-            {breadcrumb.map((c, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && <Ico name="chevRight" size={11} />}
-                <span style={{ color: i === breadcrumb.length - 1 ? 'var(--ink-0)' : 'var(--ink-2)' }}>{c}</span>
-              </React.Fragment>
-            ))}
+            {breadcrumb.map((c, i) => {
+              const isLast = i === breadcrumb.length - 1;
+              const label = typeof c === 'string' ? c : c.label;
+              const href  = typeof c === 'string' ? undefined : c.href;
+              return (
+                <React.Fragment key={i}>
+                  {i > 0 && <Ico name="chevRight" size={11} />}
+                  {href && !isLast ? (
+                    <Link href={href} style={{ color: 'var(--ink-2)', textDecoration: 'none' }}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+                      onMouseLeave={e => (e.currentTarget.style.color = 'var(--ink-2)')}
+                    >{label}</Link>
+                  ) : (
+                    <span style={{ color: isLast ? 'var(--ink-0)' : 'var(--ink-2)' }}>{label}</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </div>
         )}
         {title && (

@@ -7,7 +7,6 @@ import { Ico } from '@/components/chrome/icons';
 import { Avatar } from '@/components/chrome/icons';
 import { Sev, StatusPill, SevCounts } from '@/components/ui/SevBadge';
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
-import { LiveNotes } from '@/components/collab/LiveNotes';
 import { LivePresence } from '@/components/collab/LivePresence';
 
 type ScopeRow = { asset: string; type: string; notes: string };
@@ -81,9 +80,10 @@ type Props = {
   allUsers: Member[];
   engagementSiblings?: EngagementSibling[];
   carryoverFindings?: CarryoverFinding[];
+  backSlug?: string;
 };
 
-const TABS = ['Overview', 'Findings', 'Asset Owners', 'Reports', 'Scope', 'Report Content', 'Notes', 'Engagements'] as const;
+const TABS = ['Overview', 'Findings', 'Reports', 'Scope', 'Report Content', 'Notes'] as const;
 type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
@@ -307,6 +307,7 @@ function SummaryAIOverlay({ phase, findingCount }: { phase: AIPhase; findingCoun
         @keyframes aiSummaryCore { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
         @keyframes aiSummaryPulse { 0%{opacity:0} 50%{opacity:1} 100%{opacity:0} }
         @keyframes aiSummarySlide { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes noteDot { 0%,80%,100%{transform:scale(0);opacity:0.3} 40%{transform:scale(1);opacity:1} }
       `}</style>
 
       {/* Orb */}
@@ -361,7 +362,7 @@ function SummaryAIOverlay({ phase, findingCount }: { phase: AIPhase; findingCoun
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export function ProjectTabs({ project, findings, reports, counts, scopeRows, allUsers, engagementSiblings = [], carryoverFindings = [] }: Props) {
+export function ProjectTabs({ project, findings, reports, counts, scopeRows, allUsers, engagementSiblings = [], carryoverFindings = [], backSlug: _backSlug }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('Findings');
   const [sevFilter, setSevFilter] = useState('all');
@@ -478,15 +479,15 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
             {tab === 'Findings' && (
               <span className="badge" style={{ marginLeft: 4 }}>{findings.length}</span>
             )}
-            {tab === 'Engagements' && engagementSiblings.length > 1 && (
-              <span className="badge" style={{ marginLeft: 4 }}>{engagementSiblings.length}</span>
-            )}
           </button>
         ))}
       </div>
 
-      {/* Tab content */}
-      <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+      {/* Tab content — Notes gets its own full-screen layout */}
+      {activeTab === 'Notes' && (
+        <ProjectNotesEditor projectId={project.id} initialNotes={project.notes ?? ''} />
+      )}
+      <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', padding: '24px 28px', display: activeTab === 'Notes' ? 'none' : undefined }}>
 
         {/* ── FINDINGS TAB ── */}
         {activeTab === 'Findings' && (
@@ -806,86 +807,414 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           </div>
         )}
 
-        {/* ── ASSET OWNERS TAB ── */}
-        {activeTab === 'Asset Owners' && (
-          <AssetOwnerTab findings={findings} projectId={project.id} />
-        )}
+        {/* Notes tab is rendered outside this container (full-screen) */}
 
-        {/* ── Notes tab ── */}
-        {activeTab === 'Notes' && (
-          <LiveNotes projectId={project.id} initialNotes={project.notes ?? ''} />
-        )}
-
-        {/* ── ENGAGEMENTS TAB ── */}
-        {activeTab === 'Engagements' && (
-          <EngagementsTab
-            project={project}
-            engagementSiblings={engagementSiblings}
-            carryoverFindings={carryoverFindings}
-          />
-        )}
 
       </div>
     </div>
   );
 }
 
-// ── Notes Tab Component ───────────────────────────────────────────────────────
-function NotesTab({ projectId, initialNotes }: { projectId: string; initialNotes: string }) {
-  const [notes, setNotes] = React.useState(initialNotes);
-  const [saving, setSaving] = React.useState(false);
-  const [saved, setSaved] = React.useState(false);
-  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+// ── Notes markdown renderer (base64-aware) ────────────────────────────────────
+function buildNotesHtml(md: string): string {
+  if (!md?.trim()) return '<p style="color:var(--ink-3);font-style:italic;padding:4px 0">Nothing written yet…</p>';
 
-  function handleChange(val: string) {
-    setNotes(val);
-    setSaved(false);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => save(val), 1200);
+  function escH(s: string) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function inlineH(text: string): string {
+    let h = text;
+    h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, src) => {
+      if (!src) return '';
+      const escaped = src.startsWith('data:') ? src : escH(src);
+      return `<span style="display:block;margin:6px 0"><img src="${escaped}" alt="${escH(alt)}" style="max-width:100%;border-radius:4px;border:1px solid var(--line-2)" />${alt ? `<span style="display:block;font-size:11px;color:var(--ink-3);margin-top:3px">${escH(alt)}</span>` : ''}</span>`;
+    });
+    h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color:#5B9BD5;text-decoration:underline">$1</a>');
+    h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+    h = h.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+    h = h.replace(/`([^`\n]+)`/g, '<code style="font-family:var(--font-mono);font-size:12px;background:rgba(255,255,255,.1);padding:1px 5px;border-radius:3px">$1</code>');
+    return h;
   }
 
-  async function save(val: string) {
-    setSaving(true);
+  const parts: string[] = [];
+  const segs = md.split(/(```[\w]*\n?[\s\S]*?```)/g);
+  for (const seg of segs) {
+    const fence = seg.match(/^```([\w]*)\n?([\s\S]*?)```$/);
+    if (fence) {
+      const lang = fence[1] || '';
+      parts.push(`<pre style="background:#0F1115;color:#E6E6E6;font-family:var(--font-mono);font-size:12.5px;line-height:1.55;padding:12px 16px;border-radius:6px;margin:8px 0;white-space:pre-wrap;word-break:break-word">${lang ? `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#7A8390;margin-bottom:8px">${escH(lang)}</div>` : ''}${escH(fence[2].trimEnd())}</pre>`);
+      continue;
+    }
+    const lines = seg.split('\n');
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i].trim();
+      if (!line) { i++; continue; }
+      let m: RegExpMatchArray | null;
+      if ((m = line.match(/^###\s+(.*)/))) { parts.push(`<h3 style="font-size:14px;font-weight:600;margin:14px 0 4px;color:var(--ink-0)">${inlineH(m[1])}</h3>`); i++; continue; }
+      if ((m = line.match(/^##\s+(.*)/))) { parts.push(`<h2 style="font-size:16px;font-weight:700;margin:16px 0 4px;color:var(--ink-0);border-bottom:1px solid var(--line-1);padding-bottom:4px">${inlineH(m[1])}</h2>`); i++; continue; }
+      if ((m = line.match(/^#\s+(.*)/))) { parts.push(`<h1 style="font-size:20px;font-weight:700;margin:18px 0 6px;color:var(--ink-0)">${inlineH(m[1])}</h1>`); i++; continue; }
+      if (line.startsWith('> ')) { parts.push(`<blockquote style="border-left:3px solid var(--line-3);margin:6px 0;padding:4px 12px;color:var(--ink-2);font-style:italic">${inlineH(line.slice(2))}</blockquote>`); i++; continue; }
+      if (/^[-*+]\s/.test(line)) {
+        const items: string[] = [];
+        while (i < lines.length && /^[-*+]\s/.test(lines[i].trim())) {
+          items.push(`<li style="margin-bottom:3px">${inlineH(lines[i].trim().replace(/^[-*+]\s/, ''))}</li>`);
+          i++;
+        }
+        parts.push(`<ul style="margin:6px 0;padding-left:20px">${items.join('')}</ul>`);
+        continue;
+      }
+      if (/^\d+\.\s/.test(line)) {
+        const items: string[] = [];
+        while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+          items.push(`<li style="margin-bottom:3px">${inlineH(lines[i].trim().replace(/^\d+\.\s/, ''))}</li>`);
+          i++;
+        }
+        parts.push(`<ol style="margin:6px 0;padding-left:20px">${items.join('')}</ol>`);
+        continue;
+      }
+      parts.push(`<p style="margin:4px 0;line-height:1.65">${inlineH(line)}</p>`);
+      i++;
+    }
+  }
+  return parts.join('');
+}
+
+const NOTES_TOOLBAR = [
+  { icon: 'bold', label: 'Bold', ins: '**bold**' },
+  { icon: 'italic', label: 'Italic', ins: '*italic*' },
+  { icon: 'heading', label: 'Heading', ins: '## Heading' },
+  { icon: 'list', label: 'Bullets', ins: '- item\n- item\n- item' },
+  { icon: 'codeblock', label: 'Code block', ins: '```bash\ncode here\n```' },
+  { icon: 'quote', label: 'Blockquote', ins: '> quote' },
+];
+
+// ── Parse embedded base64 images from notes markdown ─────────────────────────
+type NoteImage = { alt: string; dataUrl: string; idx: number };
+function parseNoteImages(md: string): NoteImage[] {
+  const regex = /!\[([^\]]*)\]\((data:[^)]{10,})\)/g;
+  const results: NoteImage[] = [];
+  let match; let idx = 0;
+  while ((match = regex.exec(md)) !== null) {
+    results.push({ alt: match[1] || `Screenshot ${idx + 1}`, dataUrl: match[2], idx: idx++ });
+  }
+  return results;
+}
+
+// ── Full-screen Notes markdown editor ────────────────────────────────────────
+function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; initialNotes: string }) {
+  const [notes, setNotes] = React.useState(initialNotes);
+  const [editorTab, setEditorTab] = React.useState<'Write' | 'Preview'>('Write');
+  const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [dragOver, setDragOver] = React.useState(false);
+  const [conflict, setConflict] = React.useState<string | null>(null);
+  const [remoteTyping, setRemoteTyping] = React.useState<string | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimer = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const typingThrottle = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypedAt = React.useRef<number>(0);
+  const lastSaved = React.useRef(initialNotes);
+
+  // Derived: images embedded in current notes
+  const embeddedImages = React.useMemo(() => parseNoteImages(notes), [notes]);
+
+  function insertAtCursor(text: string, base?: string) {
+    const val = base ?? notes;
+    const ta = textareaRef.current;
+    if (!ta) { const n = val + text; setNotes(n); schedSave(n); return; }
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const next = val.slice(0, s) + text + val.slice(e);
+    setNotes(next);
+    schedSave(next);
+    requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(s + text.length, s + text.length); });
+  }
+
+  function schedSave(val: string) {
+    setSaveStatus('idle');
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => persist(val), 1200);
+  }
+
+  async function persist(val: string) {
+    setSaveStatus('saving');
     try {
-      await fetch(`/api/projects/${projectId}`, {
+      const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: val }),
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } finally {
-      setSaving(false);
+      setSaveStatus(res.ok ? 'saved' : 'error');
+      if (res.ok) lastSaved.current = val;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch { setSaveStatus('error'); }
+  }
+
+  function handleChange(val: string) {
+    setNotes(val);
+    lastTypedAt.current = Date.now();
+    setConflict(null);
+    schedSave(val);
+    // Throttle typing broadcasts to every 2s
+    if (!typingThrottle.current) {
+      fetch(`/api/collab/notes:${projectId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field: 'notes' }),
+      }).catch(() => {});
+      typingThrottle.current = setTimeout(() => { typingThrottle.current = null; }, 2000);
     }
   }
 
+  function embedFile(file: File, atPos?: number) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const dataUrl = ev.target?.result as string;
+      const label = file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ') || 'screenshot';
+      const tag = `\n![${label}](${dataUrl})\n`;
+      const ta = textareaRef.current;
+      const pos = atPos ?? (ta ? ta.selectionStart : notes.length);
+      const current = notes; // capture at read time
+      const next = current.slice(0, pos) + tag + current.slice(pos);
+      setNotes(next);
+      schedSave(next);
+      requestAnimationFrame(() => { if (ta) { ta.focus(); ta.setSelectionRange(pos + tag.length, pos + tag.length); } });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const img = Array.from(e.clipboardData.items).find(it => it.type.startsWith('image/'));
+    if (!img) return;
+    e.preventDefault();
+    const blob = img.getAsFile();
+    if (!blob) return;
+    const pos = textareaRef.current?.selectionStart ?? notes.length;
+    embedFile(new File([blob], `screenshot-${embeddedImages.length + 1}.png`, { type: blob.type }), pos);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    if (Array.from(e.dataTransfer.items).some(it => it.type.startsWith('image/'))) {
+      e.preventDefault(); setDragOver(true);
+    }
+  }
+  function handleDragLeave() { setDragOver(false); }
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault(); setDragOver(false);
+    Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/')).forEach(f => embedFile(f));
+  }
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    Array.from(e.target.files || []).forEach(f => embedFile(f));
+    e.target.value = '';
+  }
+
+  // SSE real-time sync (replaces polling)
+  React.useEffect(() => {
+    const typingTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+    const es = new EventSource(`/api/collab/notes:${projectId}`);
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'notes_update') {
+          if (data.notes === lastSaved.current) return;
+          const idleSince = Date.now() - lastTypedAt.current;
+          if (idleSince > 5000) {
+            setNotes(data.notes);
+            lastSaved.current = data.notes;
+            setConflict(null);
+          } else {
+            setConflict(data.notes);
+          }
+        }
+        if (data.type === 'typing' && data.field === 'notes') {
+          setRemoteTyping(data.userName || 'Someone');
+          setTimeout(() => setRemoteTyping(p => p === data.userName ? null : p), 3500);
+        }
+        if (data.type === 'typing' && data.field === null) {
+          setRemoteTyping(null);
+        }
+      } catch { /* ignore */ }
+    };
+
+    pollTimer.current = null as unknown as ReturnType<typeof setInterval>; // keep ref but don't poll
+    return () => {
+      es.close();
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    };
+  }, [projectId]);
+
+  // Remove a specific image from the notes string
+  function removeImage(dataUrl: string) {
+    // Escape the data URL for regex (it's a data: URL so just string replace)
+    const escaped = dataUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const next = notes.replace(new RegExp(`\\n?!\\[[^\\]]*\\]\\(${escaped}\\)\\n?`, 'g'), '\n').replace(/\n{3,}/g, '\n\n');
+    setNotes(next);
+    schedSave(next);
+  }
+
+  // Re-insert an existing image reference at cursor
+  function reinsertImage(img: NoteImage) {
+    insertAtCursor(`\n![${img.alt}](${img.dataUrl})\n`);
+  }
+
   return (
-    <div style={{ padding: '24px 28px', maxWidth: 820, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Info banner */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-sm)', borderLeft: '3px solid var(--accent)' }}>
-        <Ico name="info" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-        <span style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-          Notes are <strong>private to the team</strong> and are sent to AI when generating findings or summaries. Use this for tester observations, recon notes, client context, or anything that helps the AI produce better output.
-        </span>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Toolbar bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 16px', borderBottom: '1px solid var(--line-1)', background: 'var(--bg-0)', flexShrink: 0 }}>
+        {(['Write', 'Preview'] as const).map(t => (
+          <button key={t} onClick={() => setEditorTab(t)} style={{
+            padding: '5px 10px', borderRadius: 'var(--r-xs)',
+            background: editorTab === t ? 'var(--bg-2)' : 'transparent',
+            border: `1px solid ${editorTab === t ? 'var(--line-2)' : 'transparent'}`,
+            color: editorTab === t ? 'var(--ink-0)' : 'var(--ink-2)',
+            fontSize: 12, cursor: 'pointer', transition: 'all .1s',
+          }}>{t}</button>
+        ))}
+        <div style={{ width: 1, height: 18, background: 'var(--line-2)', margin: '0 4px' }} />
+        {editorTab === 'Write' && (
+          <div style={{ display: 'flex', gap: 2 }}>
+            {NOTES_TOOLBAR.map(({ icon, label, ins }) => (
+              <button key={icon} title={label}
+                onClick={() => insertAtCursor('\n' + ins + '\n')}
+                style={{ width: 26, height: 26, borderRadius: 'var(--r-xs)', border: 'none', background: 'transparent', color: 'var(--ink-3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Ico name={icon} size={13} />
+              </button>
+            ))}
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        {remoteTyping && (
+          <span style={{ fontSize: 11, color: 'var(--accent)', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ display: 'inline-flex', gap: 2 }}>
+              {[0,1,2].map(i => <span key={i} style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--accent)', animation: `noteDot 1.2s ${i*0.2}s ease-in-out infinite` }} />)}
+            </span>
+            {remoteTyping} is typing
+          </span>
+        )}
+        <LivePresence entity={`project-notes:${projectId}`} />
+        <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: saveStatus === 'saved' ? 'var(--status-resolved)' : saveStatus === 'saving' ? 'var(--ink-3)' : saveStatus === 'error' ? 'var(--sev-critical)' : 'var(--ink-4)' }}>
+          {saveStatus === 'saving' ? 'saving…' : saveStatus === 'saved' ? '✓ saved' : saveStatus === 'error' ? 'error' : `${notes.length} chars`}
+        </div>
       </div>
 
-      <div className="card" style={{ padding: 'var(--card-pad)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div className="eyebrow" style={{ marginBottom: 2 }}>Engagement Notes</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Markdown supported · Auto-saved</div>
-          </div>
-          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: saved ? 'var(--status-resolved)' : saving ? 'var(--ink-3)' : 'var(--ink-4)' }}>
-            {saved ? '✓ Saved' : saving ? 'Saving…' : `${notes.length} chars`}
-          </div>
+      {conflict !== null && (
+        <div style={{ padding: '8px 16px', background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.3)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <span style={{ fontSize: 12, color: 'var(--ink-1)', flex: 1 }}>⚠️ <strong>Someone else updated the notes</strong> while you were typing.</span>
+          <button onClick={() => { setNotes(conflict); lastSaved.current = conflict; setConflict(null); }} className="btn btn-sm" style={{ fontSize: 11 }}>Use theirs</button>
+          <button onClick={() => { persist(notes); setConflict(null); }} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Keep mine</button>
         </div>
-        <textarea
-          className="input thin-scroll"
-          value={notes}
-          onChange={e => handleChange(e.target.value)}
-          placeholder={`# Engagement Notes\n\n## Recon Findings\n- Target runs nginx 1.18 with default error pages\n- S3 bucket enumerated: dev-backups.target.com (public)\n\n## Client Context\n- Pentest scope agreed 2026-04-10\n- Out of scope: payment gateway (third-party)\n\n## Tester Observations\n- Auth bypass via role parameter manipulation on /admin\n- API keys found in JS bundle at /static/main.js\n\n## Notes for AI\n- Focus finding descriptions on business impact\n- Client is a fintech — emphasise PCI-DSS implications`}
-          style={{ minHeight: 420, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.7 }}
-        />
+      )}
+
+      {/* Editor / Preview area */}
+      <div
+        style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
+        onDragOver={editorTab === 'Write' ? handleDragOver : undefined}
+        onDragLeave={editorTab === 'Write' ? handleDragLeave : undefined}
+        onDrop={editorTab === 'Write' ? handleDrop : undefined}
+      >
+        {dragOver && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 10,
+            background: 'rgba(91,155,213,.12)', border: '2px dashed #5B9BD5',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none', borderRadius: 4,
+          }}>
+            <div style={{ textAlign: 'center', color: '#5B9BD5', fontSize: 14, fontWeight: 600 }}>
+              <div style={{ fontSize: 28 }}>🖼</div>
+              <div style={{ marginTop: 8 }}>Drop image to embed inline</div>
+            </div>
+          </div>
+        )}
+        {editorTab === 'Write' ? (
+          <textarea
+            ref={textareaRef}
+            className="thin-scroll"
+            value={notes}
+            onChange={e => handleChange(e.target.value)}
+            onPaste={handlePaste}
+            placeholder={`# Engagement Notes\n\n## Recon Findings\n- Target runs nginx 1.18 with default error pages\n- S3 bucket enumerated: dev-backups.target.com (public)\n\n## Client Context\n- Pentest scope agreed 2026-04-10\n- Out of scope: payment gateway (third-party)\n\n## Tester Observations\n- Auth bypass via role parameter manipulation on /admin\n- API keys found in JS bundle at /static/main.js\n\n## Notes for AI\n- Focus finding descriptions on business impact\n- Client is a fintech — emphasise PCI-DSS implications\n\nTip: paste or drag-and-drop screenshots to embed them inline.`}
+            style={{
+              display: 'block', width: '100%', height: '100%',
+              padding: '20px 28px', background: 'var(--bg-0)', border: 'none', outline: 'none',
+              color: 'var(--ink-1)', fontFamily: 'var(--font-mono)', fontSize: 13.5,
+              lineHeight: 1.75, resize: 'none', boxSizing: 'border-box',
+            }}
+          />
+        ) : (
+          <div
+            className="thin-scroll"
+            style={{ height: '100%', overflowY: 'auto', padding: '20px 28px', maxWidth: 860, color: 'var(--ink-0)', fontSize: 14, lineHeight: 1.7, boxSizing: 'border-box' }}
+            dangerouslySetInnerHTML={{ __html: buildNotesHtml(notes) }}
+          />
+        )}
+      </div>
+
+      {/* ── Screenshot / Evidence panel ── */}
+      <div style={{ borderTop: '1px solid var(--line-1)', background: 'var(--bg-1)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px 6px' }}>
+          <span className="eyebrow" style={{ fontSize: 9, flex: 1 }}>
+            Screenshots{embeddedImages.length > 0 ? ` · ${embeddedImages.length} embedded` : ''}
+          </span>
+          <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileInput} style={{ display: 'none' }} />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="btn btn-sm btn-ghost"
+            style={{ height: 24, padding: '0 8px', fontSize: 11, gap: 4 }}
+          >
+            <Ico name="plus" size={11} /> Upload image
+          </button>
+        </div>
+
+        {embeddedImages.length === 0 ? (
+          <div style={{ padding: '2px 16px 10px', color: 'var(--ink-3)', fontSize: 12, lineHeight: 1.6 }}>
+            Paste <kbd style={{ background: 'var(--bg-3)', border: '1px solid var(--line-2)', borderRadius: 3, padding: '0 4px', fontSize: 11 }}>⌘V</kbd> or drag-and-drop an image into the editor to embed it inline.
+          </div>
+        ) : (
+          <div className="thin-scroll" style={{ display: 'flex', gap: 10, padding: '0 16px 12px', overflowX: 'auto' }}>
+            {embeddedImages.map((img) => (
+              <div key={img.idx} style={{
+                flexShrink: 0, width: 130,
+                border: '1px solid var(--line-2)', borderRadius: 'var(--r-sm)',
+                background: 'var(--bg-0)', overflow: 'hidden',
+                display: 'flex', flexDirection: 'column',
+              }}>
+                {/* Thumbnail */}
+                <div style={{ position: 'relative', height: 76, background: 'var(--bg-2)', overflow: 'hidden' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={img.dataUrl} alt={img.alt} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  {/* Remove button */}
+                  <button
+                    onClick={() => removeImage(img.dataUrl)}
+                    title="Remove from notes"
+                    style={{
+                      position: 'absolute', top: 4, right: 4, width: 18, height: 18, borderRadius: '50%',
+                      background: 'rgba(0,0,0,.65)', border: 'none', cursor: 'pointer',
+                      color: '#fff', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>✕</button>
+                  {/* Re-insert button */}
+                  <button
+                    onClick={() => reinsertImage(img)}
+                    title="Insert reference at cursor"
+                    style={{
+                      position: 'absolute', top: 4, left: 4, width: 18, height: 18, borderRadius: '50%',
+                      background: 'rgba(0,0,0,.65)', border: 'none', cursor: 'pointer',
+                      color: '#fff', fontSize: 9, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                    <Ico name="plus" size={9} />
+                  </button>
+                </div>
+                {/* Caption */}
+                <div style={{ padding: '5px 7px', fontSize: 10, color: 'var(--ink-2)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {img.alt}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
