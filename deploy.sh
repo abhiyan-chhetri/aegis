@@ -233,10 +233,9 @@ ADMIN_PASSWORD="admin123456"
 ADMIN_INITIALS="AD"
 # Pre-hashed password: bcryptjs.hashSync('admin123456', 12)
 HASHED_PASS='$2b$12$kkan6o1kWR8Jz6SG6j845eklaXV71QNwAsoEs8dwH8sNzxnOQjMB2'
-NOW=$(date -u +"%Y-%m-%d %H:%M:%S")
 
 psql "$DATABASE_URL" << EOF 2>/dev/null
-INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt", "updatedAt")
+INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt")
 VALUES (
   '$ADMIN_ID',
   '$ADMIN_NAME',
@@ -245,14 +244,12 @@ VALUES (
   '$HASHED_PASS',
   'admin',
   'Security',
-  '$NOW',
-  '$NOW'
+  NOW()
 )
 ON CONFLICT (email) DO UPDATE SET
   name = '$ADMIN_NAME',
   password = '$HASHED_PASS',
-  role = 'admin',
-  "updatedAt" = '$NOW';
+  role = 'admin';
 EOF
 
 echo -e "${GREEN}✓ Admin user created${NC}"

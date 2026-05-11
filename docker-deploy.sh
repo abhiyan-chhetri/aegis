@@ -187,7 +187,7 @@ INITIALS="AD"
 HASHED_PASS='$2b$12$kkan6o1kWR8Jz6SG6j845eklaXV71QNwAsoEs8dwH8sNzxnOQjMB2'
 
 docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" << EOSQL
-INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt", "updatedAt")
+INSERT INTO "User" (id, name, initials, email, password, role, team, "createdAt")
 VALUES (
   '${ADMIN_ID}',
   '${ADMIN_NAME}',
@@ -196,13 +196,12 @@ VALUES (
   '${HASHED_PASS}',
   'admin',
   'Security',
-  NOW(), NOW()
+  NOW()
 )
 ON CONFLICT (email) DO UPDATE SET
   name = '${ADMIN_NAME}',
   password = '${HASHED_PASS}',
-  role = 'admin',
-  "updatedAt" = NOW();
+  role = 'admin';
 EOSQL
 success "Admin account created: admin@aegis.local / admin123456"
 
