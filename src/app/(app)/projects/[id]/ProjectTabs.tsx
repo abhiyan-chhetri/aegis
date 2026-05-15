@@ -955,7 +955,7 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                   title="Regenerate the entire narrative (Executive Summary, Methodology, Attack Narrative)"
                   style={{ whiteSpace: 'nowrap', gap: 6, borderRadius: 'var(--r-xs) 0 0 var(--r-xs)' }}
                 >
-                  <span style={{ fontSize: 13 }}>✨</span>
+                  <span className={aiPhase !== 'idle' ? 'anim-sparkle' : ''} style={{ fontSize: 13 }}>✨</span>
                   {aiPhase !== 'idle' ? 'Generating…' : 'Generate with AI'}
                 </button>
                 <button

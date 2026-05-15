@@ -3,6 +3,7 @@ import React from 'react';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Ico } from '@/components/chrome/icons';
 import { CopyButton } from './CopyButton';
+import { CountUp, StaggerList, Reveal } from '@/components/anim/animate';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,35 @@ interface Release {
 // ─── Data ────────────────────────────────────────────────────────────────────
 
 const RELEASES: Release[] = [
+  {
+    version: '1.7.0',
+    date: '2026-05-15',
+    title: 'Full-Screen Writing, Section-Level AI & a Less-Lying AI Model',
+    summary: 'Writing your report should feel like writing in a notebook, not a tiny comment box. Executive Summary and Attack Narrative now have full-page editors with the same toolbar, image paste and live co-editing as the Engagement Notes page. Generate with AI is now surgical — pick a single section to refresh and the rest stays exactly as you left it. The AI prompts have also been rewritten to stop inventing payloads, fake CVE numbers, and "in today\'s threat landscape" filler.',
+    highlight: true,
+    changes: [
+      { type: 'new', text: 'Full-height Report Content editor — Executive Summary and Attack Narrative now occupy the full viewport with the same Notes-style toolbar (bold, italic, headings, lists, code blocks, quotes), image paste & drag-drop, and live co-editing' },
+      { type: 'new', text: 'Fullscreen toggle in every markdown editor (Notes, Executive Summary, Attack Narrative) — click the maximize button and the editor fills the entire screen for distraction-free writing; Esc exits' },
+      { type: 'new', text: 'Per-section "Generate with AI" — the split-button on the Report Content tab lets you regenerate only the Executive Summary, only the Methodology, only the Attack Narrative, or the whole narrative; a one-click ✨ AI pill on each section header does the same for that section' },
+      { type: 'new', text: 'Section-aware AI prompt — when regenerating just one section, the other sections are sent to the model with an explicit "echo back verbatim, do not polish" instruction so your manual edits stay untouched' },
+      { type: 'new', text: 'Live multi-cursor presence — when a teammate is editing a finding or notes, a coloured strip and name pill appear at their current line so you can see exactly where they are; the caret colour matches their accent across the whole UI' },
+      { type: 'new', text: 'Per-version "copy markdown" button on each changelog release card — grab a clean, ready-to-paste summary of any single release for Slack, email, or Confluence' },
+      { type: 'new', text: '"Approved by" column in Revision History — the cover page of every pentest report now lists the reviewer who approved it and the approval date next to the author' },
+      { type: 'new', text: 'Vulnerability Library now renders embedded screenshots — image references inside Description / Impact / Remediation resolve evidence properly and respect the same |WxH and |preset sizing as the main report' },
+      { type: 'improved', text: 'AI prompts rewritten for honesty — explicit "DO NOT FABRICATE" rules: no invented HTTP requests, payloads, CVE numbers, vendor versions, vulnerability sub-types, regulatory fines, or breach numbers; sections that can\'t be written truthfully from the notes get an "Awaiting tester confirmation" placeholder instead of speculation' },
+      { type: 'improved', text: 'AI prompts now cap length per section — Summary 1 sentence; Description 2-4 short paragraphs; Impact 3-6 bullets; Remediation 3-6 short steps; References 2-4 entries. Reports are shorter but stay specific to the engagement' },
+      { type: 'improved', text: 'AI tone rule: "write like a tired CREST consultant at the end of a long day — direct, factual, short sentences"; explicit ban on phrases like "in today\'s threat landscape", "ever-evolving threat", "robust security posture", and similar marketing copy' },
+      { type: 'improved', text: 'When the tester names a vulnerability class only ("SQL Injection", "XSS"), the AI is now forbidden from picking a sub-type ("union-based", "DOM-based", etc.) without explicit notes — no more guessed assumptions in client reports' },
+      { type: 'improved', text: 'No more "Use theirs / Keep mine" prompts on Notes and Report Content — edits stream live with caret preservation so teammates converge instantly without losing your place' },
+      { type: 'improved', text: 'Live typing indicators no longer show your own name to yourself — the "X is editing" pill only appears when someone else is actually editing' },
+      { type: 'improved', text: 'Numbered list markers in reports render correctly with proper indentation' },
+      { type: 'fixed', text: 'Report Content "Generate with AI" no longer overwrites the entire narrative when you only meant to refresh one section' },
+      { type: 'fixed', text: 'Library detail slide-over: embedded images now load correctly (previously the page didn\'t fetch evidence so figure references showed as text placeholders)' },
+      { type: 'fixed', text: 'Atomic blocks (images, code blocks, callouts) in reports are never split mid-element across page boundaries; they push whole to the next page like Microsoft Word' },
+      { type: 'fixed', text: 'Underscores inside URLs (e.g. https://test.com/foo_bar_baz) no longer trigger italic markdown rendering anywhere in the platform' },
+      { type: 'fixed', text: 'AI-generated finding title now actually populates the title field (was silently discarded in previous versions)' },
+    ],
+  },
   {
     version: '1.6.0',
     date: '2026-05-15',
@@ -210,7 +240,7 @@ export default async function ChangelogPage() {
         <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 28px 64px' }}>
 
           {/* Header */}
-          <div style={{ marginBottom: 36 }}>
+          <Reveal as="div" duration={620} style={{ marginBottom: 36 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 8, flexWrap: 'wrap' }}>
               <h1 className="serif" style={{ margin: 0, fontSize: 32, fontWeight: 400, color: 'var(--ink-0)' }}>
                 AEGIS — Release Notes
@@ -228,12 +258,14 @@ export default async function ChangelogPage() {
                 { label: 'Bug fixes', value: fixes },
               ].map(s => (
                 <div key={s.label} style={{ textAlign: 'center', minWidth: 80 }}>
-                  <div className="serif" style={{ fontSize: 28, color: 'var(--accent)', lineHeight: 1 }}>{s.value}</div>
+                  <div className="serif" style={{ fontSize: 28, color: 'var(--accent)', lineHeight: 1 }}>
+                    <CountUp to={s.value} duration={1100} />
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, fontFamily: 'var(--font-mono)' }}>{s.label}</div>
                 </div>
               ))}
             </div>
-          </div>
+          </Reveal>
 
           {/* Legend */}
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 32 }}>
@@ -242,12 +274,12 @@ export default async function ChangelogPage() {
             ))}
           </div>
 
-          {/* Timeline */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          {/* Timeline — staggered reveal */}
+          <StaggerList step={90} duration={520} style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             {RELEASES.map((release, i) => (
               <ReleaseCard key={release.version} release={release} isLast={i === RELEASES.length - 1} />
             ))}
-          </div>
+          </StaggerList>
 
           {/* Confluence export note */}
           <div style={{

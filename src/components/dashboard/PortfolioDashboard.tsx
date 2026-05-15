@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Avatar, Ico } from '@/components/chrome/icons';
 import { StatusPill } from '@/components/ui/SevBadge';
+import { StaggerList } from '@/components/anim/animate';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -304,7 +305,7 @@ export function PortfolioDashboard() {
       {/* ── Row 1: Delivery & Activity KPIs ── */}
       <div>
         <div className="eyebrow" style={{ marginBottom: 10, paddingLeft: 2 }}>Monthly Business Review</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--line-1)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+        <StaggerList step={70} duration={460} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--line-1)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
           <KpiTile
             label="Resolution Rate"
             value={`${summary.resolutionRate}%`}
@@ -333,11 +334,11 @@ export function PortfolioDashboard() {
             color="var(--ink-0)"
             delta={<Delta current={summary.newFindingsThisMonth} prev={summary.newFindingsLastMonth} invertColor={false} />}
           />
-        </div>
+        </StaggerList>
       </div>
 
       {/* ── Row 2: Risk & Performance KPIs ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--line-1)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+      <StaggerList step={70} duration={460} style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--line-1)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
         <KpiTile
           label="Portfolio Risk Score"
           value={riskLabel}
@@ -364,7 +365,7 @@ export function PortfolioDashboard() {
           color={summary.avgDaysToResolve > 30 ? 'var(--sev-high)' : summary.avgDaysToResolve > 14 ? 'var(--sev-medium)' : 'var(--status-resolved)'}
           isText
         />
-      </div>
+      </StaggerList>
 
       {/* ── Row 3: Monthly trend + Severity dist ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16 }}>

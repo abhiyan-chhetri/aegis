@@ -386,3 +386,58 @@ pre {
   50%, 100% { opacity: 0; }
 }
 .caret-pulse { animation: caret-blink 1s steps(1, end) infinite; border-radius: 1px; }
+
+/* ═══ Subtle micro-interactions powered alongside anime.js ═══ */
+/* Cards lift on hover — feels alive without being a casino */
+.card { transition: transform .18s ease-out, box-shadow .18s ease-out, border-color .18s ease-out; }
+.card:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+.btn { transition: transform .12s ease-out, background .12s ease-out, border-color .12s ease-out; }
+.btn:hover:not(:disabled) { transform: translateY(-1px); }
+.btn:active:not(:disabled) { transform: translateY(0); }
+/* Soft pulse for "saving" / "loading" labels */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.anim-pulse { animation: soft-pulse 1.4s ease-in-out infinite; }
+/* Sparkle rotation when "Generating with AI" */
+@keyframes sparkle-spin {
+  0%   { transform: rotate(0deg)   scale(1); }
+  50%  { transform: rotate(180deg) scale(1.15); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+.anim-sparkle { display: inline-block; animation: sparkle-spin 1.8s linear infinite; }
+/* Severity-badge gentle bounce on first mount — applied where needed */
+@keyframes pop-in {
+  0%   { transform: scale(0.6); opacity: 0; }
+  60%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.anim-pop-in { animation: pop-in 320ms cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+/* Shimmer for skeleton placeholders */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.anim-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--bg-2) 0%,
+    var(--bg-3) 50%,
+    var(--bg-2) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+/* Sidebar nav link slide on hover (left accent grows in) */
+.side-link { position: relative; transition: padding-left .18s ease-out, color .18s ease-out; }
+.side-link::before {
+  content: ''; position: absolute; left: 0; top: 25%; height: 50%; width: 0;
+  background: var(--accent); border-radius: 0 3px 3px 0;
+  transition: width .18s ease-out;
+}
+.side-link:hover::before { width: 3px; }
+.side-link:hover { padding-left: 14px; }
+/* Severity-color outline animation on critical/high finding row hover */
+.row-crit-hover:hover { box-shadow: inset 3px 0 0 var(--sev-critical); }
+.row-high-hover:hover { box-shadow: inset 3px 0 0 var(--sev-high); }
