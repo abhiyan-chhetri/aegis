@@ -26,6 +26,34 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: '1.6.0',
+    date: '2026-05-15',
+    title: 'Google Docs-Style Live Streaming, Real Markdown Everywhere & Smarter AI',
+    summary: 'The collaboration model is now true live streaming — no more "Use theirs / Keep mine" prompts. As teammates type, their changes appear on your screen with the caret staying exactly where you left it. We also threw out the home-grown markdown parser and replaced it with a real CommonMark + GitHub-flavoured library, so tables, autolinks, task lists and underscores-in-URLs finally work everywhere they should.',
+    highlight: true,
+    changes: [
+      { type: 'new', text: 'Live streaming edits — when a teammate is typing on the same notes or report content, their changes flow into your editor in real time with the typing caret visible in their colour; no more "Use theirs / Keep mine" decision banner' },
+      { type: 'new', text: 'Multi-user typing indicators — every editor now shows a coloured caret and name badge for each person currently typing in that field' },
+      { type: 'new', text: 'Per-section AI generation — when generating a finding with AI, choose to fill only Description, only Impact, only Recommendations, only References, or the whole thing; manual edits in other fields are preserved' },
+      { type: 'new', text: 'Report Content editor now has the full Notes-style toolbar — image upload, image paste from clipboard, drag-and-drop, write/preview toggle and live-streaming co-editing for Executive Summary and Attack Narrative' },
+      { type: 'new', text: '"Approved by" column in Revision History — the pentest report cover page now shows who reviewed and approved the report, with the approval date alongside the author' },
+      { type: 'new', text: 'Per-version copy button on the changelog — click "Copy" on any release card to grab a ready-to-paste markdown summary for Confluence, email or Slack' },
+      { type: 'improved', text: 'Markdown rendering throughout — Vulnerability Library, finding cards, Report Content, Executive Summary, Attack Narrative and the final report all use the same react-markdown engine; bold, italic, links, tables, code blocks, strikethrough and task lists now render correctly everywhere' },
+      { type: 'improved', text: 'Report pagination — atomic blocks (images, code blocks, callouts) are no longer split mid-element across pages; if a block doesn\'t fit on the current page it flows whole to the next page, just like Microsoft Word' },
+      { type: 'improved', text: 'Code blocks in reports now have syntax-highlighted tokens (keywords, strings, comments, numbers) on the same dark theme' },
+      { type: 'improved', text: 'Inline markdown rendering in "Key Areas for Improvement" and "Immediate Actions" — finding titles and remediation snippets now render bold, italic and inline code instead of showing raw asterisks' },
+      { type: 'improved', text: 'Numbered list markers in reports now render correctly (1. 2. 3. …) — previously they were sometimes hidden by tight margins' },
+      { type: 'improved', text: 'Faster live save cadence (400 ms) so co-editors see each other\'s changes more quickly' },
+      { type: 'fixed', text: 'Underscores inside URLs (e.g. https://test.com/foo_bar) no longer trigger italic markdown formatting in the report' },
+      { type: 'fixed', text: 'Markdown links [text](url) now render as clickable links throughout the report' },
+      { type: 'fixed', text: 'AI-generated finding title is now applied to the title field (previously silently discarded)' },
+      { type: 'fixed', text: 'Approve / Reject buttons on the pentest report are now visible only to the assigned reviewer; other users see the review status read-only' },
+      { type: 'fixed', text: 'Webhook delivery (Teams / Slack) now accepts self-signed and internal-CA TLS certificates' },
+      { type: 'fixed', text: '"Retest Window" row removed from the Engagement Timeline — was misleading when no retest was contracted' },
+      { type: 'fixed', text: 'Image dimensions can now be set inline — write ![Screenshot|400x300](src) or ![diagram|medium](src) to size figures' },
+    ],
+  },
+  {
     version: '1.5.0',
     date: '2026-05-11',
     title: 'Google Docs-Style Live Editing, Smarter Project Organisation & Full Audit Trail',
@@ -245,11 +273,37 @@ export default async function ChangelogPage() {
 
 // ─── Release Card ─────────────────────────────────────────────────────────────
 
+function formatReleaseAsMarkdown(release: Release): string {
+  const lines: string[] = [];
+  lines.push(`# Aegis v${release.version} — ${release.title}`);
+  lines.push(`*Released ${release.date}*`);
+  lines.push('');
+  lines.push(release.summary);
+  lines.push('');
+  const byType: Record<ChangeType, string[]> = { new: [], improved: [], fixed: [], security: [], breaking: [] };
+  for (const c of release.changes) byType[c.type].push(c.text);
+  const headings: Record<ChangeType, string> = {
+    new: 'What\'s new',
+    improved: 'Improvements',
+    fixed: 'Fixes',
+    security: 'Security',
+    breaking: 'Breaking changes',
+  };
+  (Object.keys(headings) as ChangeType[]).forEach(t => {
+    if (byType[t].length === 0) return;
+    lines.push(`## ${headings[t]}`);
+    for (const text of byType[t]) lines.push(`- ${text}`);
+    lines.push('');
+  });
+  return lines.join('\n').trim() + '\n';
+}
+
 function ReleaseCard({ release, isLast }: { release: Release; isLast: boolean }) {
   const typeCounts = (release.changes as Change[]).reduce((acc, c) => {
     acc[c.type] = (acc[c.type] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
+  const markdown = formatReleaseAsMarkdown(release);
 
   return (
     <div style={{ display: 'flex', gap: 0 }}>
@@ -296,8 +350,8 @@ function ReleaseCard({ release, isLast }: { release: Release; isLast: boolean })
                   {release.title}
                 </h2>
               </div>
-              {/* Change type summary badges */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
+              {/* Change type summary badges + per-version copy */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
                 {(Object.entries(typeCounts) as [ChangeType, number][]).map(([type, count]) => (
                   <span key={type} style={{
                     fontSize: 10, fontFamily: 'var(--font-mono)',
@@ -309,6 +363,7 @@ function ReleaseCard({ release, isLast }: { release: Release; isLast: boolean })
                     {count} {type}
                   </span>
                 ))}
+                <CopyButton text={markdown} label={`v${release.version}`} />
               </div>
             </div>
             <p style={{ margin: '10px 0 0', fontSize: 13.5, color: 'var(--ink-2)', lineHeight: 1.6 }}>

@@ -451,9 +451,17 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       .map(([, v]) => v.userName);
   }
 
-  // AI generate finding
-  const generateWithAI = useCallback(async () => {
+  // AI generate finding — partial generation supported via the `sections` arg.
+  // - undefined / empty → fill ALL fields (metadata + content + cvss)
+  // - subset → fill only those long-form text fields, leave everything else untouched
+  type AISection = 'title' | 'description' | 'reproduction' | 'impact' | 'remediation' | 'references' | 'metadata';
+  const ALL_SECTIONS: AISection[] = ['title','description','reproduction','impact','remediation','references','metadata'];
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
+
+  const generateWithAI = useCallback(async (sectionsArg?: AISection[]) => {
     if (aiPhase !== 'idle') return;
+    const sections = (!sectionsArg || sectionsArg.length === 0) ? ALL_SECTIONS : sectionsArg;
+    const wants = (s: AISection) => sections.includes(s);
     setAiError('');
     setAiPhase('thinking');
 
@@ -478,58 +486,47 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       const r = data.result;
       setAiPhase('writing');
 
-      // Populate all fields with typing animation
-      const tasks: Array<() => Promise<void>> = [
-        () => typeText(r.summary || '',      v => setDescription(prev => prev || v), 8),
-        () => typeText(r.description || '',  setDescription, 12),
-        () => typeText(r.reproduction || '', setReproduction, 12),
-        () => typeText(r.impact || '',       setImpact, 12),
-        () => typeText(r.remediation || '',  setRemediation, 12),
-        () => typeText(r.references || '',   setReferences, 14),
-      ];
-
-      // Run content fields sequentially (description first, then others in parallel)
-      await tasks[0]();  // summary → description  (may be overwritten below)
-
-      // Apply instantly (no typing delay for non-text fields)
-      if (r.title) setTitle(r.title);
-      if (r.cwe) setCwe(r.cwe);
-      if (r.owasp) setOwasp(r.owasp);
-      if (r.severity) { setSeverity(r.severity); setSeverityLocked(true); }
-      if (r.cvss) {
-        const cv = r.cvss as Record<string, string>;
-        setCvss({
-          AV: (cv.AV || 'N') as 'N'|'A'|'L'|'P',
-          AC: (cv.AC || 'L') as 'L'|'H',
-          PR: (cv.PR || 'N') as 'N'|'L'|'H',
-          UI: (cv.UI || 'N') as 'N'|'R',
-          S:  (cv.S  || 'U') as 'U'|'C',
-          C:  (cv.C  || 'N') as 'N'|'L'|'H',
-          I:  (cv.I  || 'N') as 'N'|'L'|'H',
-          A:  (cv.A  || 'N') as 'N'|'L'|'H',
-        });
-      }
-      if (Array.isArray(r.assets) && r.assets.length > 0) {
-        setAffectedAssets(prev => prev || r.assets.join('\n'));
+      // Apply instantly: metadata + non-text fields (only if metadata requested OR full-fill)
+      if (wants('title') && r.title) setTitle(r.title);
+      if (wants('metadata')) {
+        if (r.cwe) setCwe(r.cwe);
+        if (r.owasp) setOwasp(r.owasp);
+        if (r.severity) { setSeverity(r.severity); setSeverityLocked(true); }
+        if (r.cvss) {
+          const cv = r.cvss as Record<string, string>;
+          setCvss({
+            AV: (cv.AV || 'N') as 'N'|'A'|'L'|'P',
+            AC: (cv.AC || 'L') as 'L'|'H',
+            PR: (cv.PR || 'N') as 'N'|'L'|'H',
+            UI: (cv.UI || 'N') as 'N'|'R',
+            S:  (cv.S  || 'U') as 'U'|'C',
+            C:  (cv.C  || 'N') as 'N'|'L'|'H',
+            I:  (cv.I  || 'N') as 'N'|'L'|'H',
+            A:  (cv.A  || 'N') as 'N'|'L'|'H',
+          });
+        }
+        if (Array.isArray(r.assets) && r.assets.length > 0) {
+          setAffectedAssets(prev => prev || r.assets.join('\n'));
+        }
       }
 
-      // Type in the long-form fields
-      await Promise.all([
-        typeText(r.description || '', setDescription, 10),
-        typeText(r.reproduction || '', setReproduction, 10),
-        typeText(r.impact || '', setImpact, 10),
-        typeText(r.remediation || '', setRemediation, 10),
-        typeText(r.references || '', setReferences, 14),
-      ]);
+      // Type into requested long-form fields in parallel
+      const typingTasks: Promise<void>[] = [];
+      if (wants('description'))  typingTasks.push(typeText(r.description  || '', setDescription,  10));
+      if (wants('reproduction')) typingTasks.push(typeText(r.reproduction || '', setReproduction, 10));
+      if (wants('impact'))       typingTasks.push(typeText(r.impact       || '', setImpact,       10));
+      if (wants('remediation'))  typingTasks.push(typeText(r.remediation  || '', setRemediation,  10));
+      if (wants('references'))   typingTasks.push(typeText(r.references   || '', setReferences,   14));
+      await Promise.all(typingTasks);
 
       setAiPhase('done');
-      // Auto-dismiss after 1.5s
       setTimeout(() => setAiPhase('idle'), 1500);
 
     } catch (err) {
       setAiPhase('idle');
       setAiError(err instanceof Error ? err.message : 'AI generation failed');
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiPhase, title, description, reproduction, affectedAssets]);
 
   // Keyboard shortcut: Cmd+Enter
@@ -725,38 +722,102 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           autoFocus
           style={{flex:1,fontSize:18,fontWeight:500,color:'var(--ink-0)',background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}
         />
-        {/* AI Generate button */}
-        <button
-          onClick={generateWithAI}
-          disabled={aiPhase !== 'idle'}
-          title="Generate with AI (⌘↩)"
-          style={{
-            display:'flex',alignItems:'center',gap:7,padding:'7px 14px',
-            borderRadius:'var(--r-sm)',border:'1px solid',cursor:'pointer',
-            flexShrink:0,fontSize:12.5,fontWeight:600,transition:'all .15s',
-            background:'linear-gradient(135deg,rgba(91,155,213,0.12) 0%,rgba(201,168,245,0.12) 100%)',
-            borderColor:'rgba(91,155,213,0.35)',
-            color:'var(--ink-1)',
-            boxShadow: aiPhase !== 'idle' ? 'none' : '0 0 0 0 rgba(91,155,213,0)',
-          }}
-          onMouseEnter={e=>{
-            if(aiPhase==='idle') {
-              e.currentTarget.style.background='linear-gradient(135deg,rgba(91,155,213,0.2) 0%,rgba(201,168,245,0.2) 100%)';
-              e.currentTarget.style.boxShadow='0 0 16px rgba(91,155,213,0.25)';
-            }
-          }}
-          onMouseLeave={e=>{
-            e.currentTarget.style.background='linear-gradient(135deg,rgba(91,155,213,0.12) 0%,rgba(201,168,245,0.12) 100%)';
-            e.currentTarget.style.boxShadow='none';
-          }}
-        >
-          <Ico name="sparkles" size={14} style={{color:'#9b7fd4'}}/>
-          {aiPhase === 'idle' ? 'Generate with AI' : 'Generating…'}
-          <kbd style={{
-            fontSize:9,fontFamily:'var(--font-mono)',background:'rgba(0,0,0,0.15)',
-            borderRadius:3,padding:'1px 5px',color:'var(--ink-3)',border:'1px solid rgba(255,255,255,0.08)',
-          }}>⌘↩</kbd>
-        </button>
+        {/* AI Generate split-button — main click fills the whole finding;
+            chevron opens a menu to fill only specific sections */}
+        <div style={{ position: 'relative', display: 'flex', flexShrink: 0 }}>
+          <button
+            onClick={() => generateWithAI()}
+            disabled={aiPhase !== 'idle'}
+            title="Generate the entire finding with AI (⌘↩)"
+            style={{
+              display:'flex',alignItems:'center',gap:7,padding:'7px 12px',
+              borderRadius:'var(--r-sm) 0 0 var(--r-sm)',border:'1px solid',borderRight:'none',cursor:'pointer',
+              fontSize:12.5,fontWeight:600,transition:'all .15s',
+              background:'linear-gradient(135deg,rgba(91,155,213,0.12) 0%,rgba(201,168,245,0.12) 100%)',
+              borderColor:'rgba(91,155,213,0.35)',
+              color:'var(--ink-1)',
+            }}
+            onMouseEnter={e=>{ if(aiPhase==='idle') e.currentTarget.style.background='linear-gradient(135deg,rgba(91,155,213,0.2) 0%,rgba(201,168,245,0.2) 100%)'; }}
+            onMouseLeave={e=>{ e.currentTarget.style.background='linear-gradient(135deg,rgba(91,155,213,0.12) 0%,rgba(201,168,245,0.12) 100%)'; }}
+          >
+            <Ico name="sparkles" size={14} style={{color:'#9b7fd4'}}/>
+            {aiPhase === 'idle' ? 'Generate with AI' : 'Generating…'}
+            <kbd style={{
+              fontSize:9,fontFamily:'var(--font-mono)',background:'rgba(0,0,0,0.15)',
+              borderRadius:3,padding:'1px 5px',color:'var(--ink-3)',border:'1px solid rgba(255,255,255,0.08)',
+            }}>⌘↩</kbd>
+          </button>
+          <button
+            onClick={() => setAiMenuOpen(v => !v)}
+            disabled={aiPhase !== 'idle'}
+            title="Generate only specific sections"
+            style={{
+              padding:'7px 8px',
+              borderRadius:'0 var(--r-sm) var(--r-sm) 0',border:'1px solid',cursor:'pointer',
+              background:'linear-gradient(135deg,rgba(91,155,213,0.12) 0%,rgba(201,168,245,0.12) 100%)',
+              borderColor:'rgba(91,155,213,0.35)',
+              color:'var(--ink-1)', display:'flex',alignItems:'center',
+            }}
+          >
+            <Ico name="chevDown" size={12} />
+          </button>
+          {aiMenuOpen && (
+            <>
+              {/* click-outside backdrop */}
+              <div onClick={() => setAiMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+              <div style={{
+                position: 'absolute', top: '100%', right: 0, marginTop: 6,
+                background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+                borderRadius: 'var(--r-sm)', boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                minWidth: 220, zIndex: 20, padding: 6,
+              }}>
+                <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)', padding: '6px 10px', letterSpacing: '0.06em' }}>
+                  GENERATE SELECTED SECTIONS
+                </div>
+                {([
+                  ['description',  'Description'],
+                  ['impact',       'Impact'],
+                  ['remediation',  'Recommendations'],
+                  ['reproduction', 'Technical Details'],
+                  ['references',   'References'],
+                  ['metadata',     'CWE / OWASP / CVSS'],
+                  ['title',        'Title'],
+                ] as [AISection, string][]).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => { setAiMenuOpen(false); generateWithAI([key]); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      width: '100%', padding: '7px 10px', fontSize: 12,
+                      background: 'transparent', border: 'none', borderRadius: 'var(--r-xs)',
+                      cursor: 'pointer', color: 'var(--ink-1)', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <Ico name="sparkles" size={11} style={{ color: '#9b7fd4' }} />
+                    {label}
+                  </button>
+                ))}
+                <div style={{ height: 1, background: 'var(--line-1)', margin: '4px 0' }} />
+                <button
+                  onClick={() => { setAiMenuOpen(false); generateWithAI(); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    width: '100%', padding: '7px 10px', fontSize: 12,
+                    background: 'transparent', border: 'none', borderRadius: 'var(--r-xs)',
+                    cursor: 'pointer', color: 'var(--ink-1)', textAlign: 'left', fontWeight: 600,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <Ico name="sparkles" size={11} style={{ color: '#9b7fd4' }} />
+                  Whole finding
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* AI error banner */}

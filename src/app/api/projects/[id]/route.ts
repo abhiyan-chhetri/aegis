@@ -184,14 +184,30 @@ export async function PATCH(
       ),
     ]);
 
-    // ── Broadcast notes change to SSE subscribers ─────────────────────────────
+    // ── Broadcast live content changes to SSE subscribers ────────────────────
+    const userName = (session as { name?: string }).name || 'Someone';
     if (notes !== undefined) {
       broadcast(`notes:${id}`, {
-        type: 'notes_update',
-        notes: String(notes),
-        userId: session.id,
-        userName: (session as any).name || 'Someone',
-        ts: Date.now(),
+        type: 'content_update', field: 'notes', value: String(notes),
+        userId: session.id, userName, ts: Date.now(),
+      });
+    }
+    if (executiveSummary !== undefined) {
+      broadcast(`project:${id}`, {
+        type: 'content_update', field: 'executiveSummary', value: String(executiveSummary),
+        userId: session.id, userName, ts: Date.now(),
+      });
+    }
+    if (methodology !== undefined) {
+      broadcast(`project:${id}`, {
+        type: 'content_update', field: 'methodology', value: String(methodology),
+        userId: session.id, userName, ts: Date.now(),
+      });
+    }
+    if (attackNarrative !== undefined) {
+      broadcast(`project:${id}`, {
+        type: 'content_update', field: 'attackNarrative', value: String(attackNarrative),
+        userId: session.id, userName, ts: Date.now(),
       });
     }
 

@@ -1,50 +1,57 @@
 'use client';
 
 /**
- * LiveNotes — collaborative notes editor with true real-time SSE sync.
- * - SSE subscription to /api/collab/notes:PROJECT_ID
- * - Debounced auto-save (1.2 s) — broadcasts on save
- * - Conflict banner when someone edits while you're typing
- * - LivePresence avatars + typing indicator
+ * LiveNotes — collaborative notes editor with true real-time SSE streaming.
+ *
+ * Behaviour (matches Google Docs / Office co-author):
+ * - Every keystroke broadcasts the latest text after a short debounce (400 ms).
+ * - Remote edits are applied LIVE while preserving the local caret position.
+ *   No "Keep mine / Keep theirs" prompt — both clients converge instantly.
+ * - "X is typing…" badge with per-user accent colour.
+ * - Live presence avatars (LivePresence).
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { LivePresence } from './LivePresence';
 
-const SAVE_DEBOUNCE = 1200;
-const IDLE_BEFORE_SYNC = 4_000;
+const SAVE_DEBOUNCE = 400;          // ms — broadcast cadence while typing
+const REMOTE_APPLY_DELAY = 250;     // ms — wait briefly so we don't fight a fast typer
 
 interface Props {
   projectId: string;
   initialNotes: string;
 }
 
+interface RemoteTyper {
+  userId: string;
+  userName: string;
+  userColor: string;
+}
+
 export function LiveNotes({ projectId, initialNotes }: Props) {
   const [notes, setNotes] = useState(initialNotes);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [conflict, setConflict] = useState<{ value: string; by: string } | null>(null);
-  const [remoteTyping, setRemoteTyping] = useState<string | null>(null); // who's currently typing
+  const [typers, setTypers] = useState<Map<string, RemoteTyper>>(new Map());
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTypedAt = useRef<number>(0);
-  const lastSavedValue = useRef(initialNotes);
-  const currentNotes = useRef(initialNotes);
-  const esRef = useRef<EventSource | null>(null);
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => { currentNotes.current = notes; }, [notes]);
+  const lastBroadcastValue = useRef(initialNotes);
+  const isLocalEditing = useRef(false);
+  const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingRemote = useRef<string | null>(null);
+  const remoteApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const save = useCallback(async (val: string) => {
     setSaveState('saving');
     try {
-      await fetch(`/api/projects/${projectId}`, {
+      const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: val }),
       });
-      lastSavedValue.current = val;
-      setSaveState('saved');
-      setTimeout(() => setSaveState('idle'), 2500);
+      lastBroadcastValue.current = val;
+      setSaveState(res.ok ? 'saved' : 'error');
+      setTimeout(() => setSaveState(prev => prev === 'saved' ? 'idle' : prev), 1800);
     } catch {
       setSaveState('error');
     }
@@ -52,81 +59,135 @@ export function LiveNotes({ projectId, initialNotes }: Props) {
 
   function handleChange(val: string) {
     setNotes(val);
-    setConflict(null);
-    lastTypedAt.current = Date.now();
+    isLocalEditing.current = true;
+    if (localEditTimer.current) clearTimeout(localEditTimer.current);
+    localEditTimer.current = setTimeout(() => { isLocalEditing.current = false; }, 1500);
+
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => save(val), SAVE_DEBOUNCE);
 
-    // Send typing indicator (throttled to every 2s)
-    if (!typingTimer.current) {
-      fetch(`/api/collab/notes:${projectId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field: 'notes' }),
-      }).catch(() => {});
-      typingTimer.current = setTimeout(() => { typingTimer.current = null; }, 2000);
+    // Send "I'm typing" pulse (throttled by the server's typing state TTL)
+    fetch(`/api/collab/notes:${projectId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field: 'notes' }),
+    }).catch(() => {});
+  }
+
+  // Apply a remote update with caret-preservation logic.
+  function applyRemoteValue(newValue: string) {
+    if (newValue === notes) return;
+    const el = textareaRef.current;
+    if (!el) {
+      setNotes(newValue);
+      return;
     }
+    const oldValue = el.value;
+    const oldStart = el.selectionStart;
+    const oldEnd = el.selectionEnd;
+
+    // Compute the diff to map the caret across the remote change.
+    // Find the common prefix and suffix lengths between old and new.
+    let prefix = 0;
+    const minLen = Math.min(oldValue.length, newValue.length);
+    while (prefix < minLen && oldValue[prefix] === newValue[prefix]) prefix++;
+    let suffix = 0;
+    while (
+      suffix < (minLen - prefix) &&
+      oldValue[oldValue.length - 1 - suffix] === newValue[newValue.length - 1 - suffix]
+    ) suffix++;
+
+    const oldChangedStart = prefix;
+    const oldChangedEnd   = oldValue.length - suffix;
+    const newChangedEnd   = newValue.length - suffix;
+    const delta           = newChangedEnd - oldChangedEnd;
+
+    const newStart = oldStart <= oldChangedStart ? oldStart
+                   : oldStart >= oldChangedEnd  ? oldStart + delta
+                   : newChangedEnd;
+    const newEnd   = oldEnd   <= oldChangedStart ? oldEnd
+                   : oldEnd   >= oldChangedEnd  ? oldEnd + delta
+                   : newChangedEnd;
+
+    setNotes(newValue);
+    lastBroadcastValue.current = newValue;
+
+    // Restore caret after React commits the new value
+    requestAnimationFrame(() => {
+      try {
+        el.setSelectionRange(newStart, newEnd);
+      } catch { /* element gone */ }
+    });
   }
 
   // SSE subscription
   useEffect(() => {
     const es = new EventSource(`/api/collab/notes:${projectId}`);
-    esRef.current = es;
 
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 
-        if (data.type === 'notes_update') {
-          // Ignore our own broadcasts (the server echoes back)
-          if (data.notes === lastSavedValue.current) return;
+        if (data.type === 'content_update' && data.field === 'notes') {
+          // Ignore our own echo (the server broadcasts everyone)
+          if (data.value === lastBroadcastValue.current) return;
 
-          const idleSince = Date.now() - lastTypedAt.current;
-          if (idleSince > IDLE_BEFORE_SYNC) {
-            setNotes(data.notes);
-            lastSavedValue.current = data.notes;
-            setConflict(null);
+          if (!isLocalEditing.current) {
+            // We're idle — apply immediately
+            applyRemoteValue(data.value);
           } else {
-            setConflict({ value: data.notes, by: data.userName || 'Someone' });
+            // We're typing — queue the remote value and apply after a short delay
+            pendingRemote.current = data.value;
+            if (remoteApplyTimer.current) clearTimeout(remoteApplyTimer.current);
+            remoteApplyTimer.current = setTimeout(() => {
+              if (pendingRemote.current !== null && !isLocalEditing.current) {
+                applyRemoteValue(pendingRemote.current);
+              }
+              pendingRemote.current = null;
+            }, REMOTE_APPLY_DELAY);
           }
         }
 
         if (data.type === 'typing' && data.field === 'notes') {
-          setRemoteTyping(data.userName || 'Someone');
-          setTimeout(() => setRemoteTyping(prev => prev === data.userName ? null : prev), 3500);
+          setTypers(prev => {
+            const next = new Map(prev);
+            next.set(data.userId, {
+              userId: data.userId,
+              userName: data.userName || 'Someone',
+              userColor: data.userColor || '#6366f1',
+            });
+            return next;
+          });
+          // Auto-expire after 4s of no further "typing" pulses
+          setTimeout(() => {
+            setTypers(prev => {
+              const next = new Map(prev);
+              next.delete(data.userId);
+              return next;
+            });
+          }, 4000);
         }
 
         if (data.type === 'typing' && data.field === null) {
-          setRemoteTyping(null);
+          setTypers(prev => {
+            const next = new Map(prev);
+            next.delete(data.userId);
+            return next;
+          });
         }
-      } catch { /* ignore malformed */ }
-    };
-
-    es.onerror = () => {
-      // SSE reconnects automatically; no action needed
+      } catch { /* malformed event */ }
     };
 
     return () => {
       es.close();
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      if (typingTimer.current) clearTimeout(typingTimer.current);
+      if (localEditTimer.current) clearTimeout(localEditTimer.current);
+      if (remoteApplyTimer.current) clearTimeout(remoteApplyTimer.current);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  function applyRemote() {
-    if (conflict) {
-      setNotes(conflict.value);
-      lastSavedValue.current = conflict.value;
-      setConflict(null);
-    }
-  }
-
-  function keepMine() {
-    if (conflict) {
-      save(currentNotes.current);
-      setConflict(null);
-    }
-  }
+  const typerList = Array.from(typers.values());
 
   return (
     <div style={{ padding: '24px 28px', maxWidth: 820, display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -134,37 +195,30 @@ export function LiveNotes({ projectId, initialNotes }: Props) {
       {/* Info / status bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-sm)', borderLeft: '3px solid var(--accent)' }}>
         <span style={{ fontSize: 13 }}>📝</span>
-        <span style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5, flex: 1 }}>
-          {remoteTyping
-            ? <><strong style={{ color: 'var(--accent)' }}>{remoteTyping}</strong> is typing…</>
-            : <>Notes are <strong>private to the team</strong>. Changes sync in real-time.</>}
+        <span style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5, flex: 1, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {typerList.length > 0 ? (
+            <>
+              {typerList.map((t, i) => (
+                <React.Fragment key={t.userId}>
+                  <span style={{ color: t.userColor, fontWeight: 600 }}>{t.userName}</span>
+                  {i < typerList.length - 1 && <span>·</span>}
+                </React.Fragment>
+              ))}
+              <span>{typerList.length === 1 ? 'is typing…' : 'are typing…'}</span>
+              <span className="caret-pulse" style={{ display: 'inline-block', width: 7, height: 12, background: typerList[0].userColor, marginLeft: 2, verticalAlign: 'middle' }} />
+            </>
+          ) : (
+            <>Notes are <strong>private to the team</strong>. Edits stream live to everyone.</>
+          )}
         </span>
         <LivePresence entity={`project-notes:${projectId}`} />
       </div>
-
-      {/* Conflict banner */}
-      {conflict && (
-        <div style={{
-          padding: '12px 16px', background: 'rgba(245,158,11,0.08)',
-          border: '1px solid rgba(245,158,11,0.3)', borderRadius: 'var(--r-sm)',
-          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-        }}>
-          <span style={{ fontSize: 13 }}>⚠️</span>
-          <span style={{ fontSize: 12, color: 'var(--ink-1)', flex: 1 }}>
-            <strong>{conflict.by}</strong> updated the notes while you were typing.
-          </span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={applyRemote} className="btn btn-sm" style={{ fontSize: 11 }}>Use theirs</button>
-            <button onClick={keepMine} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Keep mine</button>
-          </div>
-        </div>
-      )}
 
       <div className="card" style={{ padding: 'var(--card-pad)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div className="eyebrow" style={{ marginBottom: 2 }}>Engagement Notes</div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Markdown · Auto-saved · Real-time sync</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Markdown · Live-streaming · Auto-saved</div>
           </div>
           <div style={{
             fontSize: 11, fontFamily: 'var(--font-mono)',
@@ -177,6 +231,7 @@ export function LiveNotes({ projectId, initialNotes }: Props) {
           </div>
         </div>
         <textarea
+          ref={textareaRef}
           className="input thin-scroll"
           value={notes}
           onChange={e => handleChange(e.target.value)}

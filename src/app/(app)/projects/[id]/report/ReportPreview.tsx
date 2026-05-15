@@ -130,11 +130,12 @@ const DEFAULT_CSS = `
 /* Inline code */
 .rpt-icode { font-family:var(--mono); font-size:8.5pt; background:rgba(0,0,0,.07); padding:1px 5px; border-radius:2px; }
 /* Markdown bullets/ordered with accent marker */
-.rpt-ul { margin:3pt 0 7pt 16pt; padding:0; font-size:10pt; list-style:disc; }
-.rpt-ul li { margin-bottom:3pt; line-height:1.55; }
+/* padding-left provides the gutter for outside list markers (numbers/disc bullets) */
+.rpt-ul { margin:3pt 0 7pt 0; padding-left:24pt; font-size:10pt; list-style:disc outside; }
+.rpt-ul li { margin-bottom:3pt; line-height:1.55; padding-left:2pt; }
 .rpt-ul li::marker { color:var(--rpt-accent); font-weight:700; }
-.rpt-ol { margin:3pt 0 7pt 16pt; padding:0; font-size:10pt; }
-.rpt-ol li { margin-bottom:3pt; line-height:1.55; }
+.rpt-ol { margin:3pt 0 7pt 0; padding-left:28pt; font-size:10pt; list-style:decimal outside; }
+.rpt-ol li { margin-bottom:3pt; line-height:1.55; padding-left:2pt; }
 .rpt-ol li::marker { color:var(--rpt-accent); font-weight:700; }
 /* Markdown headings inside content */
 .rpt-md-h1 { font-size:13pt; font-weight:700; color:var(--ink); margin:12pt 0 2pt; border-bottom:1.5pt solid var(--rpt-accent); padding-bottom:3pt; }
@@ -196,7 +197,16 @@ type Project = {
   lead: { name: string; initials: string; role: string };
 };
 type TeamMember = { id: string; name: string; initials: string; role: string };
-type Report = { id: string; version: string; status: string; templateName: string; reviewerId?: string | null } | null;
+type Report = {
+  id: string;
+  version: string;
+  status: string;
+  templateName: string;
+  reviewerId?: string | null;
+  reviewedAt?: string | null;
+  authorId?: string | null;
+  createdAt?: string | Date | null;
+} | null;
 type Props = {
   project: Project; findings: Finding[];
   counts: Record<string, number>; riskScore: number;
@@ -245,6 +255,31 @@ function parseImgAlt(rawAlt: string): { alt: string; width?: number; height?: nu
 //  the paginator can pack each block individually onto pages without ever
 //  splitting one mid-element.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Lightweight syntax highlighting (matches .rpt-pre dark theme) ───────────
+function escHtml(s: string) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function rptOutsideTags(html: string, fn: (t: string) => string): string {
+  return html.replace(/(<[^>]*>|[^<]+)/g, m => m[0] === '<' ? m : fn(m));
+}
+const RPT_KEYWORDS = ['function','const','let','var','if','else','for','while','return','import','export','default','class','extends','async','await','try','catch','finally','throw','new','delete','typeof','instanceof','null','undefined','true','false','void','this','super','static','def','print','from','in','is','not','and','or','pass','with','as','lambda','yield','SELECT','FROM','WHERE','INSERT','UPDATE','DELETE','CREATE','DROP','TABLE','JOIN','INNER','LEFT','RIGHT','ON','GROUP','ORDER','BY','HAVING','LIMIT','DISTINCT','INDEX','ALTER','ADD','curl','http','POST','GET','PUT','PATCH','HEAD','OPTIONS','Bearer','Authorization','Content-Type'];
+function rptHlCode(code: string, lang: string): string {
+  let h = escHtml(code);
+  if (!lang || lang === 'text' || lang === 'plain') return h;
+  // ① comments first
+  h = h.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="c">$1</span>');
+  h = h.replace(/(\/\/[^\n]+)/g, '<span class="c">$1</span>');
+  h = h.replace(/^([ \t]*#[^\n]*)/gm, '<span class="c">$1</span>');
+  // ② strings
+  h = h.replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;|&#39;[^&#\n]*?&#39;)/g, '<span class="s">$1</span>');
+  // ③ keywords (only outside tags)
+  const kwRe = new RegExp(`\\b(${RPT_KEYWORDS.join('|')})\\b`, 'g');
+  h = rptOutsideTags(h, t => t.replace(kwRe, '<span class="k">$1</span>'));
+  // ④ numbers (only outside tags)
+  h = rptOutsideTags(h, t => t.replace(/\b(\d+\.?\d*(?:[eE][+-]?\d+)?)\b/g, '<span class="n">$1</span>'));
+  return h;
+}
 
 // Split markdown into top-level blocks (paragraphs, fenced code blocks, lists,
 // headings) so each block can be paginated independently. Fenced code blocks
@@ -298,9 +333,16 @@ function makeMarkdownComponents(resolveImage?: ResolveImage) {
       <a href={href} className="rpt-link" target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>
     ),
     code: ({ className, children, ...rest }: AnyProps & { className?: string }) => {
-      // Block-level code (inside <pre>) carries a `language-xxx` class from remark
+      // Block-level code (inside <pre>) carries a `language-xxx` class from remark.
+      // Apply our lightweight syntax highlighter to render coloured tokens.
       const isBlock = !!className && /(^|\s)language-/.test(className);
-      if (isBlock) return <code className={className} {...rest}>{children}</code>;
+      if (isBlock) {
+        const lang = (className!.match(/language-([\w+-]+)/) || ['',''])[1];
+        const raw = Array.isArray(children)
+          ? children.map(c => typeof c === 'string' ? c : '').join('')
+          : (typeof children === 'string' ? children : String(children ?? ''));
+        return <code className={className} dangerouslySetInnerHTML={{ __html: rptHlCode(raw, lang) }} />;
+      }
       return <code className="rpt-icode" {...rest}>{children}</code>;
     },
     pre: ({ children }: AnyProps) => <pre className="rpt-pre">{children}</pre>,
@@ -355,6 +397,36 @@ function renderMarkdownToNodes(text: string, resolveImage?: ResolveImage): React
 function renderMarkdown(text: string, resolveImage?: ResolveImage): React.ReactNode {
   const nodes = renderMarkdownToNodes(text, resolveImage);
   return nodes.length > 0 ? <>{nodes}</> : null;
+}
+
+// Render markdown INLINE — no <p> wrappers, no figure blocks. Useful inside
+// list items, badges, table cells etc. where we want **bold**, *italic*,
+// `code`, [links](url) but not paragraph spacing or image figures.
+const INLINE_COMPONENTS: Record<string, (p: AnyProps) => React.ReactNode> = {
+  p: ({ children }: AnyProps) => <>{children}</>,
+  ul: ({ children }: AnyProps) => <>{children}</>,
+  ol: ({ children }: AnyProps) => <>{children}</>,
+  li: ({ children }: AnyProps) => <>{children}</>,
+  h1: ({ children }: AnyProps) => <>{children}</>,
+  h2: ({ children }: AnyProps) => <>{children}</>,
+  h3: ({ children }: AnyProps) => <>{children}</>,
+  h4: ({ children }: AnyProps) => <>{children}</>,
+  blockquote: ({ children }: AnyProps) => <>{children}</>,
+  pre: ({ children }: AnyProps) => <>{children}</>,
+  img: () => null,
+  a: ({ children, href }: AnyProps & { href?: string }) => (
+    <a href={href} className="rpt-link" target="_blank" rel="noopener noreferrer">{children}</a>
+  ),
+  code: ({ children }: AnyProps) => <code className="rpt-icode">{children}</code>,
+};
+function InlineMarkdown({ children }: { children: string }) {
+  if (!children?.trim()) return null;
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={INLINE_COMPONENTS as any}>
+      {children}
+    </ReactMarkdown>
+  );
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
@@ -986,17 +1058,47 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
           <Page id="page-2" pageNum={2} totalPages={totalPages} project={project} logoUrl={logoUrl}>
             <SecHead num="0">Document Control</SecHead>
             <SubHead num="0.1">Revision History</SubHead>
-            <table className="rpt-table">
-              <thead><tr><th style={{ width: '10%' }}>Version</th><th style={{ width: '20%' }}>Date</th><th style={{ width: '25%' }}>Author</th><th>Description</th></tr></thead>
-              <tbody>
-                <tr>
-                  <td>{latestReport?.version || '1.0'}</td>
-                  <td suppressHydrationWarning>{todayStr}</td>
-                  <td>{project.lead?.name || 'N/A'}</td>
-                  <td>Initial release</td>
-                </tr>
-              </tbody>
-            </table>
+            {(() => {
+              const author = latestReport?.authorId
+                ? allUsers.find(u => u.id === latestReport.authorId)?.name
+                : null;
+              const approver = latestReport?.reviewerId && latestReport?.status === 'approved'
+                ? allUsers.find(u => u.id === latestReport.reviewerId)?.name
+                : null;
+              const approvedDate = latestReport?.reviewedAt
+                ? new Date(latestReport.reviewedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                : null;
+              const statusLabel = latestReport?.status === 'approved' ? 'Approved'
+                : latestReport?.status === 'in-review' ? 'In review'
+                : latestReport?.status === 'rejected' ? 'Rejected'
+                : 'Draft';
+              return (
+                <table className="rpt-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '10%' }}>Version</th>
+                      <th style={{ width: '16%' }}>Date</th>
+                      <th style={{ width: '22%' }}>Author</th>
+                      <th style={{ width: '22%' }}>Approved by</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>{latestReport?.version || '1.0'}</td>
+                      <td suppressHydrationWarning>{todayStr}</td>
+                      <td>{author || project.lead?.name || 'N/A'}</td>
+                      <td>
+                        {approver
+                          ? <><b>{approver}</b>{approvedDate && <span style={{ color: 'var(--ink60)' }}> · {approvedDate}</span>}</>
+                          : <span style={{ color: 'var(--ink60)' }}>—</span>}
+                      </td>
+                      <td>{statusLabel}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })()}
 
             <SubHead num="0.2">Confidentiality Notice</SubHead>
             <p className="rpt-p">
@@ -1137,12 +1239,20 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             if (sorted.slice(0, 3).length > 0) {
               blocks.push(
                 <ul key="areas-list" className="rpt-ul">
-                  {sorted.slice(0, 3).map(f => (
-                    <li key={f.id}>
-                      <b><span style={{ color: SEV_COLOR[f.severity], marginRight: 4 }}>[{f.severity.toUpperCase()}]</span>{f.title}</b>
-                      {f.remediation ? ` — ${f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n')[0].slice(0, 100)}` : ''}
-                    </li>
-                  ))}
+                  {sorted.slice(0, 3).map(f => {
+                    const remSnip = f.remediation
+                      ? f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n').find(l => l.trim()) || ''
+                      : '';
+                    return (
+                      <li key={f.id}>
+                        <b>
+                          <span style={{ color: SEV_COLOR[f.severity], marginRight: 4 }}>[{f.severity.toUpperCase()}]</span>
+                          <InlineMarkdown>{f.title}</InlineMarkdown>
+                        </b>
+                        {remSnip && <> — <InlineMarkdown>{remSnip.slice(0, 160)}</InlineMarkdown></>}
+                      </li>
+                    );
+                  })}
                 </ul>
               );
             } else {
@@ -1162,13 +1272,18 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
               blocks.push(<p key="ch-p" className="rpt-p">The following critical and high-severity findings require immediate attention:</p>);
               blocks.push(
                 <ul key="ch-list" className="rpt-ul">
-                  {critHighList.map(f => (
-                    <li key={f.id}>
-                      <Badge sev={f.severity} />{' '}
-                      <b>{f.code}</b> — {f.title}
-                      {f.remediation && <span style={{ color: 'var(--ink60)' }}>{': '}{f.remediation.replace(/^#{1,3}\s[^\n]*/gm,'').trim().split('\n')[0].slice(0, 80)}</span>}
-                    </li>
-                  ))}
+                  {critHighList.map(f => {
+                    const remSnip = f.remediation
+                      ? f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n').find(l => l.trim()) || ''
+                      : '';
+                    return (
+                      <li key={f.id}>
+                        <Badge sev={f.severity} />{' '}
+                        <b>{f.code}</b> — <InlineMarkdown>{f.title}</InlineMarkdown>
+                        {remSnip && <span style={{ color: 'var(--ink60)' }}>{': '}<InlineMarkdown>{remSnip.slice(0, 140)}</InlineMarkdown></span>}
+                      </li>
+                    );
+                  })}
                 </ul>
               );
             } else {
@@ -1182,7 +1297,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                   {medList.map(f => (
                     <li key={f.id}>
                       <Badge sev={f.severity} />{' '}
-                      <b>{f.code}</b> — {f.title}
+                      <b>{f.code}</b> — <InlineMarkdown>{f.title}</InlineMarkdown>
                     </li>
                   ))}
                 </ul>
@@ -1268,7 +1383,6 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                     ['Assessment Start',     project.startDate],
                     ['Assessment End',       project.endDate],
                     ['Report Issued',        todayStr],
-                    ['Retest Window',        '90 days from report issue'],
                   ].map(([m, d]) => (
                     <tr key={m}><td>{m}</td><td><span className="rpt-code">{d}</span></td></tr>
                   ))}

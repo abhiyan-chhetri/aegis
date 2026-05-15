@@ -90,9 +90,10 @@ type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
 
-// ── Inline-save text area with markdown preview ──────────────────────────────
-// Full GFM markdown support (same renderer as the report preview): headings,
-// lists, tables, links, code blocks, bold/italic, blockquotes, images.
+// ── Live-streaming, auto-saving markdown editor ──────────────────────────────
+// Same UX as the Notes editor — every edit streams to other users in real-time
+// via SSE. No "Keep mine / Keep theirs" prompts: remote updates apply live with
+// caret-preservation. Edit/Preview toggle for full GFM markdown preview.
 function AutoSaveField({
   label, hint, value: initial, field, projectId, rows = 6, placeholder,
 }: {
@@ -102,7 +103,16 @@ function AutoSaveField({
   const [value, setValue] = useState(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [typers, setTypers] = useState<Map<string, { userName: string; userColor: string }>>(new Map());
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typingPingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLocalEditing = useRef(false);
+  const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBroadcastValue = useRef(initial);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingRemote = useRef<string | null>(null);
+  const remoteApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const save = useCallback(async (v: string) => {
     setStatus('saving');
@@ -112,27 +122,132 @@ function AutoSaveField({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: v }),
       });
+      lastBroadcastValue.current = v;
       setStatus(res.ok ? 'saved' : 'error');
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setStatus('idle'), 2000);
+      setTimeout(() => setStatus(prev => prev === 'saved' ? 'idle' : prev), 1800);
     } catch {
       setStatus('error');
     }
   }, [field, projectId]);
 
+  // Apply remote update with caret preservation (same algorithm as LiveNotes)
+  const applyRemote = useCallback((newValue: string) => {
+    if (newValue === value) return;
+    const el = textareaRef.current;
+    if (!el) { setValue(newValue); lastBroadcastValue.current = newValue; return; }
+    const oldValue = el.value;
+    const oldStart = el.selectionStart;
+    const oldEnd   = el.selectionEnd;
+
+    let prefix = 0;
+    const minLen = Math.min(oldValue.length, newValue.length);
+    while (prefix < minLen && oldValue[prefix] === newValue[prefix]) prefix++;
+    let suffix = 0;
+    while (
+      suffix < (minLen - prefix) &&
+      oldValue[oldValue.length - 1 - suffix] === newValue[newValue.length - 1 - suffix]
+    ) suffix++;
+    const oldChangedStart = prefix;
+    const oldChangedEnd   = oldValue.length - suffix;
+    const newChangedEnd   = newValue.length - suffix;
+    const delta = newChangedEnd - oldChangedEnd;
+
+    const newStart = oldStart <= oldChangedStart ? oldStart : oldStart >= oldChangedEnd ? oldStart + delta : newChangedEnd;
+    const newEnd   = oldEnd   <= oldChangedStart ? oldEnd   : oldEnd   >= oldChangedEnd ? oldEnd   + delta : newChangedEnd;
+
+    setValue(newValue);
+    lastBroadcastValue.current = newValue;
+    requestAnimationFrame(() => {
+      try { el.setSelectionRange(newStart, newEnd); } catch { /* gone */ }
+    });
+  }, [value]);
+
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setValue(e.target.value);
+    const v = e.target.value;
+    setValue(v);
     setStatus('idle');
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => save(e.target.value), 900);
+    isLocalEditing.current = true;
+    if (localEditTimer.current) clearTimeout(localEditTimer.current);
+    localEditTimer.current = setTimeout(() => { isLocalEditing.current = false; }, 1500);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => save(v), 400);
+
+    // Typing pulse — throttled to 1 every 2s
+    if (!typingPingTimer.current) {
+      fetch(`/api/collab/project:${projectId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field }),
+      }).catch(() => {});
+      typingPingTimer.current = setTimeout(() => { typingPingTimer.current = null; }, 2000);
+    }
   }
+
+  // SSE subscription — listens on the shared project channel and filters by field.
+  useEffect(() => {
+    const es = new EventSource(`/api/collab/project:${projectId}`);
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'content_update' && data.field === field) {
+          if (data.value === lastBroadcastValue.current) return; // own echo
+          if (!isLocalEditing.current) {
+            applyRemote(data.value);
+          } else {
+            pendingRemote.current = data.value;
+            if (remoteApplyTimer.current) clearTimeout(remoteApplyTimer.current);
+            remoteApplyTimer.current = setTimeout(() => {
+              if (pendingRemote.current !== null && !isLocalEditing.current) {
+                applyRemote(pendingRemote.current);
+              }
+              pendingRemote.current = null;
+            }, 250);
+          }
+        }
+        if (data.type === 'typing' && data.field === field) {
+          setTypers(prev => {
+            const next = new Map(prev);
+            next.set(data.userId, { userName: data.userName || 'Someone', userColor: data.userColor || '#6366f1' });
+            return next;
+          });
+          setTimeout(() => setTypers(prev => { const n = new Map(prev); n.delete(data.userId); return n; }), 4000);
+        }
+        if (data.type === 'typing' && data.field === null) {
+          setTypers(prev => { const n = new Map(prev); n.delete(data.userId); return n; });
+        }
+      } catch { /* ignore */ }
+    };
+    return () => {
+      es.close();
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      if (localEditTimer.current) clearTimeout(localEditTimer.current);
+      if (remoteApplyTimer.current) clearTimeout(remoteApplyTimer.current);
+      if (typingPingTimer.current) clearTimeout(typingPingTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, field]);
+
+  const typerList = Array.from(typers.values());
 
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
-        <label className="form-label" style={{ marginBottom: 0 }}>{label}</label>
+        <label className="form-label" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {label}
+          {/* Live "is editing" badges */}
+          {typerList.length > 0 && (
+            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 10 }}>
+              {typerList.map((t, i) => (
+                <span key={i} style={{ color: t.userColor }}>
+                  {t.userName}
+                </span>
+              ))}
+              <span style={{ color: 'var(--ink-3)' }}>editing…</span>
+              <span className="caret-pulse" style={{ display: 'inline-block', width: 6, height: 11, background: typerList[0].userColor, marginLeft: 1, verticalAlign: 'middle' }} />
+            </span>
+          )}
+        </label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Edit / Preview toggle */}
           <div style={{ display: 'inline-flex', borderRadius: 4, background: 'var(--bg-2)', padding: 2 }}>
             <button
               type="button"
@@ -169,6 +284,7 @@ function AutoSaveField({
       {hint && <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>{hint}</div>}
       {mode === 'edit' ? (
         <textarea
+          ref={textareaRef}
           className="input"
           value={value}
           onChange={handleChange}
@@ -823,30 +939,41 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
               </div>
             )}
 
-            <div className="card" style={{ padding: 'var(--card-pad)', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
-              <div className="eyebrow" style={{ marginBottom: 16 }}>Narrative Content</div>
+            {/* Narrative Content — same live-collab editor as the Notes tab */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 16, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)' }}>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>Executive Summary</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>High-level overview for stakeholders. Written in plain language. Markdown · Live co-editing · Auto-saved.</div>
+              </div>
+              <div style={{ height: 420, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor
+                  key={`exec-${execSummaryKey}`}
+                  projectId={project.id}
+                  field="executiveSummary"
+                  label="Executive Summary"
+                  description="Markdown · Live co-editing · Auto-saved"
+                  initialNotes={aiExecSummary !== null && execSummaryKey > 0 ? aiExecSummary : (project.executiveSummary || '')}
+                  placeholder={`# Executive Summary\n\nOver X weeks, a grey-box penetration test was conducted against…\n\nThe assessment identified N critical, N high, and N medium severity findings…`}
+                />
+              </div>
+            </div>
 
-              <AutoSaveField
-                key={`exec-${execSummaryKey}`}
-                label="Executive Summary"
-                hint="High-level overview for stakeholders. Written in plain language."
-                value={aiExecSummary !== null && execSummaryKey > 0 ? aiExecSummary : (project.executiveSummary || '')}
-                field="executiveSummary"
-                projectId={project.id}
-                rows={7}
-                placeholder="Over X weeks, a grey-box penetration test was conducted against… The assessment identified N critical, N high, and N medium severity findings…"
-              />
-
-              <AutoSaveField
-                key={`narr-${attackNarrKey}`}
-                label="Attack Narrative"
-                hint="Walk-through of key attack chains discovered during the engagement."
-                value={aiAttackNarr !== null && attackNarrKey > 0 ? aiAttackNarr : (project.attackNarrative || '')}
-                field="attackNarrative"
-                projectId={project.id}
-                rows={8}
-                placeholder="During the engagement, the team identified an attack chain that led to full domain compromise:&#10;&#10;1. Initial access via SQL injection on `/api/login`&#10;2. Privilege escalation through…&#10;&#10;```bash&#10;# Example command&#10;curl -X POST https://target.com/api/login -d &quot;user=admin&apos; OR 1=1--&quot;&#10;```"
-              />
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 16, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)' }}>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>Attack Narrative</div>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Walk-through of key attack chains discovered during the engagement. Markdown · Live co-editing · Auto-saved.</div>
+              </div>
+              <div style={{ height: 480, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor
+                  key={`narr-${attackNarrKey}`}
+                  projectId={project.id}
+                  field="attackNarrative"
+                  label="Attack Narrative"
+                  description="Markdown · Live co-editing · Auto-saved"
+                  initialNotes={aiAttackNarr !== null && attackNarrKey > 0 ? aiAttackNarr : (project.attackNarrative || '')}
+                  placeholder={`# Attack Narrative\n\nDuring the engagement, the team identified an attack chain that led to full domain compromise:\n\n1. Initial access via SQL injection on /api/login\n2. Privilege escalation through…\n\n\`\`\`bash\n# Example command\ncurl -X POST https://target.com/api/login -d "user=admin' OR 1=1--"\n\`\`\``}
+                />
+              </div>
             </div>
 
             <div className="card" style={{ padding: 'var(--card-pad)' }}>
@@ -951,21 +1078,43 @@ function parseNoteImages(md: string): NoteImage[] {
   return results;
 }
 
-// ── Full-screen Notes markdown editor ────────────────────────────────────────
-function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; initialNotes: string }) {
+// ── Full-screen markdown editor with live co-editing ─────────────────────────
+// Generic: works for Engagement Notes (field='notes', channel='notes:PID'),
+// Executive Summary, Methodology, and Attack Narrative
+// (field=<name>, channel='project:PID'). All variants share the same toolbar,
+// image upload, write/preview tabs, live SSE sync, and typing badges.
+function ProjectNotesEditor({
+  projectId,
+  initialNotes,
+  field = 'notes',
+  label = 'Engagement Notes',
+  description = 'Markdown · Live-streaming · Auto-saved',
+  placeholder,
+  fullHeight = true,
+}: {
+  projectId: string;
+  initialNotes: string;
+  field?: string;
+  label?: string;
+  description?: string;
+  placeholder?: string;
+  fullHeight?: boolean;
+}) {
+  const channel = field === 'notes' ? `notes:${projectId}` : `project:${projectId}`;
   const [notes, setNotes] = React.useState(initialNotes);
   const [editorTab, setEditorTab] = React.useState<'Write' | 'Preview'>('Write');
   const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [dragOver, setDragOver] = React.useState(false);
-  const [conflict, setConflict] = React.useState<string | null>(null);
-  const [remoteTyping, setRemoteTyping] = React.useState<string | null>(null);
+  const [typers, setTypers] = React.useState<Map<string, { userName: string; userColor: string; line?: number }>>(new Map());
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollTimer = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const typingThrottle = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTypedAt = React.useRef<number>(0);
   const lastSaved = React.useRef(initialNotes);
+  const isLocalEditing = React.useRef(false);
+  const localEditTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRemote = React.useRef<string | null>(null);
+  const remoteApplyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Derived: images embedded in current notes
   const embeddedImages = React.useMemo(() => parseNoteImages(notes), [notes]);
@@ -984,7 +1133,7 @@ function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; in
   function schedSave(val: string) {
     setSaveStatus('idle');
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persist(val), 1200);
+    saveTimer.current = setTimeout(() => persist(val), 400);
   }
 
   async function persist(val: string) {
@@ -993,28 +1142,58 @@ function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; in
       const res = await fetch(`/api/projects/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: val }),
+        body: JSON.stringify({ [field]: val }),
       });
       setSaveStatus(res.ok ? 'saved' : 'error');
       if (res.ok) lastSaved.current = val;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => setSaveStatus('idle'), 2500);
+      setTimeout(() => setSaveStatus(prev => prev === 'saved' ? 'idle' : prev), 1800);
     } catch { setSaveStatus('error'); }
+  }
+
+  // Caret-preserving remote-update applier
+  function applyRemote(newValue: string) {
+    if (newValue === notes) return;
+    const el = textareaRef.current;
+    if (!el) { setNotes(newValue); lastSaved.current = newValue; return; }
+    const oldValue = el.value;
+    const oldStart = el.selectionStart;
+    const oldEnd   = el.selectionEnd;
+    let prefix = 0;
+    const minLen = Math.min(oldValue.length, newValue.length);
+    while (prefix < minLen && oldValue[prefix] === newValue[prefix]) prefix++;
+    let suffix = 0;
+    while (
+      suffix < (minLen - prefix) &&
+      oldValue[oldValue.length - 1 - suffix] === newValue[newValue.length - 1 - suffix]
+    ) suffix++;
+    const oldChangedStart = prefix;
+    const oldChangedEnd   = oldValue.length - suffix;
+    const newChangedEnd   = newValue.length - suffix;
+    const delta = newChangedEnd - oldChangedEnd;
+    const newStart = oldStart <= oldChangedStart ? oldStart : oldStart >= oldChangedEnd ? oldStart + delta : newChangedEnd;
+    const newEnd   = oldEnd   <= oldChangedStart ? oldEnd   : oldEnd   >= oldChangedEnd ? oldEnd   + delta : newChangedEnd;
+    setNotes(newValue);
+    lastSaved.current = newValue;
+    requestAnimationFrame(() => { try { el.setSelectionRange(newStart, newEnd); } catch { /* gone */ } });
   }
 
   function handleChange(val: string) {
     setNotes(val);
-    lastTypedAt.current = Date.now();
-    setConflict(null);
+    isLocalEditing.current = true;
+    if (localEditTimer.current) clearTimeout(localEditTimer.current);
+    localEditTimer.current = setTimeout(() => { isLocalEditing.current = false; }, 1500);
     schedSave(val);
-    // Throttle typing broadcasts to every 2s
+    // Throttle typing broadcasts to every 2s — include caret line so other
+    // users can see roughly where each person is editing.
     if (!typingThrottle.current) {
-      fetch(`/api/collab/notes:${projectId}`, {
+      const ta = textareaRef.current;
+      const line = ta ? (val.slice(0, ta.selectionStart).match(/\n/g)?.length ?? 0) + 1 : undefined;
+      fetch(`/api/collab/${channel}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field: 'notes' }),
+        body: JSON.stringify({ field, line }),
       }).catch(() => {});
-      typingThrottle.current = setTimeout(() => { typingThrottle.current = null; }, 2000);
+      typingThrottle.current = setTimeout(() => { typingThrottle.current = null; }, 1200);
     }
   }
 
@@ -1060,41 +1239,49 @@ function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; in
     e.target.value = '';
   }
 
-  // SSE real-time sync (replaces polling)
+  // SSE real-time streaming sync — no conflict prompts, edits flow live.
   React.useEffect(() => {
-    const typingTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
-    const es = new EventSource(`/api/collab/notes:${projectId}`);
-
+    const es = new EventSource(`/api/collab/${channel}`);
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'notes_update') {
-          if (data.notes === lastSaved.current) return;
-          const idleSince = Date.now() - lastTypedAt.current;
-          if (idleSince > 5000) {
-            setNotes(data.notes);
-            lastSaved.current = data.notes;
-            setConflict(null);
+        if ((data.type === 'content_update' && data.field === field) || (data.type === 'notes_update' && field === 'notes')) {
+          const incoming = data.value ?? data.notes;
+          if (typeof incoming !== 'string') return;
+          if (incoming === lastSaved.current) return; // own echo
+          if (!isLocalEditing.current) {
+            applyRemote(incoming);
           } else {
-            setConflict(data.notes);
+            pendingRemote.current = incoming;
+            if (remoteApplyTimer.current) clearTimeout(remoteApplyTimer.current);
+            remoteApplyTimer.current = setTimeout(() => {
+              if (pendingRemote.current !== null && !isLocalEditing.current) {
+                applyRemote(pendingRemote.current);
+              }
+              pendingRemote.current = null;
+            }, 250);
           }
         }
-        if (data.type === 'typing' && data.field === 'notes') {
-          setRemoteTyping(data.userName || 'Someone');
-          setTimeout(() => setRemoteTyping(p => p === data.userName ? null : p), 3500);
+        if (data.type === 'typing' && data.field === field) {
+          setTypers(prev => {
+            const next = new Map(prev);
+            next.set(data.userId, { userName: data.userName || 'Someone', userColor: data.userColor || '#6366f1', line: data.line });
+            return next;
+          });
+          setTimeout(() => setTypers(prev => { const n = new Map(prev); n.delete(data.userId); return n; }), 4000);
         }
         if (data.type === 'typing' && data.field === null) {
-          setRemoteTyping(null);
+          setTypers(prev => { const n = new Map(prev); n.delete(data.userId); return n; });
         }
       } catch { /* ignore */ }
     };
-
-    pollTimer.current = null as unknown as ReturnType<typeof setInterval>; // keep ref but don't poll
     return () => {
       es.close();
-      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      if (localEditTimer.current) clearTimeout(localEditTimer.current);
+      if (remoteApplyTimer.current) clearTimeout(remoteApplyTimer.current);
     };
-  }, [projectId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, channel, field]);
 
   // Remove a specific image from the notes string
   function removeImage(dataUrl: string) {
@@ -1136,12 +1323,20 @@ function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; in
           </div>
         )}
         <div style={{ flex: 1 }} />
-        {remoteTyping && (
-          <span style={{ fontSize: 11, color: 'var(--accent)', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ display: 'inline-flex', gap: 2 }}>
-              {[0,1,2].map(i => <span key={i} style={{ width: 4, height: 4, borderRadius: '50%', background: 'var(--accent)', animation: `noteDot 1.2s ${i*0.2}s ease-in-out infinite` }} />)}
-            </span>
-            {remoteTyping} is typing
+        {typers.size > 0 && (
+          <span style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {Array.from(typers.values()).map((t, i) => (
+              <span key={i} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 6px', borderRadius: 'var(--r-xs)',
+                background: `${t.userColor}1a`, border: `1px solid ${t.userColor}55`,
+                color: t.userColor, fontWeight: 600,
+              }}>
+                <span className="caret-pulse" style={{ display: 'inline-block', width: 3, height: 10, background: t.userColor }} />
+                {t.userName}
+                {t.line && <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>· L{t.line}</span>}
+              </span>
+            ))}
           </span>
         )}
         <LivePresence entity={`project-notes:${projectId}`} />
@@ -1150,17 +1345,9 @@ function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; in
         </div>
       </div>
 
-      {conflict !== null && (
-        <div style={{ padding: '8px 16px', background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.3)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-          <span style={{ fontSize: 12, color: 'var(--ink-1)', flex: 1 }}>⚠️ <strong>Someone else updated the notes</strong> while you were typing.</span>
-          <button onClick={() => { setNotes(conflict); lastSaved.current = conflict; setConflict(null); }} className="btn btn-sm" style={{ fontSize: 11 }}>Use theirs</button>
-          <button onClick={() => { persist(notes); setConflict(null); }} className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>Keep mine</button>
-        </div>
-      )}
-
       {/* Editor / Preview area */}
       <div
-        style={{ flex: 1, overflow: 'hidden', position: 'relative' }}
+        style={{ flex: 1, overflow: 'hidden', position: 'relative', background: 'var(--bg-0)' }}
         onDragOver={editorTab === 'Write' ? handleDragOver : undefined}
         onDragLeave={editorTab === 'Write' ? handleDragLeave : undefined}
         onDrop={editorTab === 'Write' ? handleDrop : undefined}
@@ -1179,20 +1366,60 @@ function ProjectNotesEditor({ projectId, initialNotes }: { projectId: string; in
           </div>
         )}
         {editorTab === 'Write' ? (
-          <textarea
-            ref={textareaRef}
-            className="thin-scroll"
-            value={notes}
-            onChange={e => handleChange(e.target.value)}
-            onPaste={handlePaste}
-            placeholder={`# Engagement Notes\n\n## Recon Findings\n- Target runs nginx 1.18 with default error pages\n- S3 bucket enumerated: dev-backups.target.com (public)\n\n## Client Context\n- Pentest scope agreed 2026-04-10\n- Out of scope: payment gateway (third-party)\n\n## Tester Observations\n- Auth bypass via role parameter manipulation on /admin\n- API keys found in JS bundle at /static/main.js\n\n## Notes for AI\n- Focus finding descriptions on business impact\n- Client is a fintech — emphasise PCI-DSS implications\n\nTip: paste or drag-and-drop screenshots to embed them inline.`}
-            style={{
-              display: 'block', width: '100%', height: '100%',
-              padding: '20px 28px', background: 'var(--bg-0)', border: 'none', outline: 'none',
-              color: 'var(--ink-1)', fontFamily: 'var(--font-mono)', fontSize: 13.5,
-              lineHeight: 1.75, resize: 'none', boxSizing: 'border-box',
-            }}
-          />
+          <>
+            {/* Remote-cursor overlay — coloured line indicators showing where
+                each remote user's caret is (Google-Docs-style multi-cursor). */}
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 5 }}>
+              {Array.from(typers.values()).filter(t => t.line && t.line > 0).map((t, i) => {
+                // padding-top:20 + lineHeight (13.5*1.75 ≈ 23.6) * (line-1)
+                const top = 20 + 23.6 * ((t.line || 1) - 1);
+                return (
+                  <div key={i} style={{
+                    position: 'absolute', left: 0, right: 0,
+                    top, height: 23.6,
+                    borderLeft: `3px solid ${t.userColor}`,
+                    background: `linear-gradient(to right, ${t.userColor}14 0%, transparent 30%)`,
+                  }}>
+                    <span style={{
+                      position: 'absolute', left: 4, top: -1,
+                      fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                      color: '#fff', background: t.userColor,
+                      padding: '1px 5px', borderRadius: '0 3px 3px 0',
+                      letterSpacing: '0.04em',
+                    }}>{t.userName}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <textarea
+              ref={textareaRef}
+              className="thin-scroll"
+              value={notes}
+              onChange={e => handleChange(e.target.value)}
+              onPaste={handlePaste}
+              onSelect={e => {
+                // Broadcast caret position when user clicks / arrows (not just types).
+                // Throttled — piggybacks on typingThrottle so we don't spam the server.
+                if (typingThrottle.current) return;
+                const ta = e.currentTarget;
+                const line = (notes.slice(0, ta.selectionStart).match(/\n/g)?.length ?? 0) + 1;
+                fetch(`/api/collab/${channel}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ field, line }),
+                }).catch(() => {});
+                typingThrottle.current = setTimeout(() => { typingThrottle.current = null; }, 1200);
+              }}
+              placeholder={placeholder ?? `# ${label}\n\nStart writing here. Markdown is supported.`}
+              style={{
+                display: 'block', width: '100%', height: '100%',
+                padding: '20px 28px', background: 'transparent', border: 'none', outline: 'none',
+                color: 'var(--ink-1)', fontFamily: 'var(--font-mono)', fontSize: 13.5,
+                lineHeight: 1.75, resize: 'none', boxSizing: 'border-box',
+                position: 'relative', zIndex: 1,
+              }}
+            />
+          </>
         ) : (
           <div
             className="thin-scroll"

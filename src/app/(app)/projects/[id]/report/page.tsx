@@ -22,7 +22,7 @@ export default async function ReportPage({params }: Props) {
       include: {
         findings: { include: { assignee: true, evidence: { orderBy: { createdAt: 'asc' } } } },
         lead: true,
-        reports: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, version: true, status: true, templateName: true, reviewerId: true } },
+        reports: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, version: true, status: true, templateName: true, reviewerId: true, reviewedAt: true, authorId: true, createdAt: true } },
       },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(

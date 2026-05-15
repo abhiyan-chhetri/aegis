@@ -2,6 +2,8 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Ico } from '@/components/chrome/icons';
 import { Sev, StatusPill } from '@/components/ui/SevBadge';
 
@@ -117,26 +119,34 @@ function FindingSlideOver({ item, onClose, onStatusChange }: {
           {item.summary && (
             <section style={{ marginBottom: 24 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>Summary</div>
-              <p style={{ margin: 0, color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>{item.summary}</p>
+              <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.summary}</ReactMarkdown>
+              </div>
             </section>
           )}
           {item.description && (
             <section style={{ marginBottom: 24 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>Description</div>
-              <p style={{ margin: 0, color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{item.description}</p>
+              <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.description}</ReactMarkdown>
+              </div>
             </section>
           )}
           {item.impact && (
             <section style={{ marginBottom: 24 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>Impact</div>
-              <p style={{ margin: 0, color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>{item.impact}</p>
+              <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.impact}</ReactMarkdown>
+              </div>
             </section>
           )}
           {item.remediation && (
             <section style={{ marginBottom: 24 }}>
               <div className="eyebrow" style={{ marginBottom: 8 }}>Remediation</div>
               <div style={{ background: 'rgba(143,201,122,0.06)', border: '1px solid rgba(143,201,122,0.15)', borderRadius: 'var(--r-md)', padding: 16 }}>
-                <p style={{ margin: 0, color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>{item.remediation}</p>
+                <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.remediation}</ReactMarkdown>
+                </div>
               </div>
             </section>
           )}

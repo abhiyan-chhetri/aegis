@@ -18,6 +18,8 @@ interface TypingState {
   userName: string;
   userColor: string;
   field: string | null;
+  /** Optional caret line number for multi-cursor awareness in editors */
+  line?: number;
   ts: number;
 }
 const typingStates = new Map<string, TypingState>(); // key = `${channel}:${userId}`
@@ -123,12 +125,14 @@ export async function POST(
   const { entity } = await params;
   const body = await request.json().catch(() => ({}));
   const field: string | null = body.field ?? null;
+  const line: number | undefined = typeof body.line === 'number' ? body.line : undefined;
 
   const state: TypingState = {
     userId: session.id,
     userName: session.name || 'Someone',
     userColor: colorForUser(session.id),
     field,
+    line,
     ts: Date.now(),
   };
 
