@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import { Ico } from '@/components/chrome/icons';
 import { Sev, StatusPill } from '@/components/ui/SevBadge';
 
+type Evidence = { id: string; filename: string; content: string };
 type Finding = {
   id: string;
   code: string;
@@ -23,7 +24,65 @@ type Finding = {
   createdAt: string;
   project: { id: string; name: string; code: string };
   assignee: { id: string; name: string; initials: string } | null;
+  evidence?: Evidence[];
 };
+
+// Custom markdown renderer that resolves evidence-id image refs and applies
+// per-image dimensions from the alt-text "|WxH" / "|preset" suffix.
+type ImgParsed = { alt: string; width?: number; height?: number };
+function parseLibImgAlt(rawAlt: string): ImgParsed {
+  const pipe = rawAlt.lastIndexOf('|');
+  if (pipe === -1) return { alt: rawAlt };
+  const altText = rawAlt.slice(0, pipe).trim();
+  const dim = rawAlt.slice(pipe + 1).trim();
+  const presets: Record<string, number> = { small: 240, medium: 380, large: 520, full: 720 };
+  if (dim in presets) return { alt: altText, width: presets[dim] };
+  const m = dim.match(/^(\d*)\s*x\s*(\d*)$/i) || dim.match(/^(\d+)$/);
+  if (m) {
+    const w = m[1] ? parseInt(m[1], 10) : undefined;
+    const h = m[2] !== undefined && m[2] !== '' ? parseInt(m[2], 10) : undefined;
+    if (w || h) return { alt: altText, width: w, height: h };
+  }
+  return { alt: rawAlt };
+}
+
+function makeLibMarkdownComponents(evidence: Evidence[] = []) {
+  const resolveImage = (src: string) => {
+    const ev = evidence.find(e => e.id === src || e.filename === src);
+    return ev?.content ?? src;
+  };
+  return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    img: ({ alt, src }: any) => {
+      const parsed = parseLibImgAlt(alt || '');
+      let finalSrc = src || '';
+      if (!finalSrc.startsWith('data:') && !finalSrc.startsWith('http')) {
+        finalSrc = resolveImage(finalSrc);
+      }
+      if (!finalSrc.startsWith('data:') && !finalSrc.startsWith('http')) {
+        return <em style={{ color: 'var(--ink-3)', fontSize: 11 }}>[figure: {parsed.alt || src}]</em>;
+      }
+      const style: React.CSSProperties = {
+        maxWidth: '100%',
+        maxHeight: parsed.height ? `${parsed.height}px` : (parsed.width ? undefined : 320),
+        width: parsed.width ? `${parsed.width}px` : undefined,
+        height: parsed.height ? `${parsed.height}px` : undefined,
+        objectFit: 'contain',
+        border: '1px solid var(--line-1)',
+        borderRadius: 4,
+        display: 'block',
+        margin: '8px 0',
+      };
+      return (
+        <figure style={{ margin: '8px 0' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={finalSrc} alt={parsed.alt} style={style} />
+          {parsed.alt && <figcaption style={{ fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic', marginTop: 4 }}>{parsed.alt}</figcaption>}
+        </figure>
+      );
+    },
+  };
+}
 
 type Project = { id: string; name: string; code: string };
 
@@ -116,40 +175,51 @@ function FindingSlideOver({ item, onClose, onStatusChange }: {
             </div>
           </div>
 
-          {item.summary && (
-            <section style={{ marginBottom: 24 }}>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Summary</div>
-              <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.summary}</ReactMarkdown>
-              </div>
-            </section>
-          )}
-          {item.description && (
-            <section style={{ marginBottom: 24 }}>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Description</div>
-              <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.description}</ReactMarkdown>
-              </div>
-            </section>
-          )}
-          {item.impact && (
-            <section style={{ marginBottom: 24 }}>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Impact</div>
-              <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.impact}</ReactMarkdown>
-              </div>
-            </section>
-          )}
-          {item.remediation && (
-            <section style={{ marginBottom: 24 }}>
-              <div className="eyebrow" style={{ marginBottom: 8 }}>Remediation</div>
-              <div style={{ background: 'rgba(143,201,122,0.06)', border: '1px solid rgba(143,201,122,0.15)', borderRadius: 'var(--r-md)', padding: 16 }}>
-                <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.remediation}</ReactMarkdown>
-                </div>
-              </div>
-            </section>
-          )}
+          {(() => {
+            const components = makeLibMarkdownComponents(item.evidence || []);
+            return (
+              <>
+                {item.summary && (
+                  <section style={{ marginBottom: 24 }}>
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>Summary</div>
+                    <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as any}>{item.summary}</ReactMarkdown>
+                    </div>
+                  </section>
+                )}
+                {item.description && (
+                  <section style={{ marginBottom: 24 }}>
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>Description</div>
+                    <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as any}>{item.description}</ReactMarkdown>
+                    </div>
+                  </section>
+                )}
+                {item.impact && (
+                  <section style={{ marginBottom: 24 }}>
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>Impact</div>
+                    <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as any}>{item.impact}</ReactMarkdown>
+                    </div>
+                  </section>
+                )}
+                {item.remediation && (
+                  <section style={{ marginBottom: 24 }}>
+                    <div className="eyebrow" style={{ marginBottom: 8 }}>Remediation</div>
+                    <div style={{ background: 'rgba(143,201,122,0.06)', border: '1px solid rgba(143,201,122,0.15)', borderRadius: 'var(--r-md)', padding: 16 }}>
+                      <div className="md-preview" style={{ color: 'var(--ink-1)', fontSize: 13.5, lineHeight: 1.7 }}>
+                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components as any}>{item.remediation}</ReactMarkdown>
+                      </div>
+                    </div>
+                  </section>
+                )}
+              </>
+            );
+          })()}
         </div>
 
         {/* footer */}

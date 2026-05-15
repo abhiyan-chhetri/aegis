@@ -374,6 +374,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   // typers: { [fieldName]: { userName, userColor } }
   const [fieldTypers, setFieldTypers] = useState<Record<string, { userName: string; userColor: string }>>({});
   const typingThrottle = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const myUserId = useRef<string | null>(null);
 
   useEffect(()=>{
     if (!finding?.id || !isEditing) return;
@@ -383,7 +384,13 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       try {
         const data = JSON.parse(event.data);
 
-        // Remote typing indicator
+        // Capture our own user id so we can filter out our own typing echoes
+        if (data.type === 'connected' && data.userId) {
+          myUserId.current = data.userId;
+        }
+
+        // Remote typing indicator — IGNORE our own echo (don't show ourselves)
+        if (data.type === 'typing' && data.userId === myUserId.current) return;
         if (data.type === 'typing') {
           setFieldTypers(prev => {
             const next = { ...prev };
@@ -444,11 +451,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
     }, 2000);
   }
 
-  // Helper: get typers for a field across all users
-  function getTypersForField(field: string): string[] {
+  // Helper: get typers for a field across all users (used by the "X is editing" pill)
+  function getTypersForField(field: string): { userName: string; userColor: string }[] {
     return Object.entries(fieldTypers)
       .filter(([k]) => k.endsWith(`_${field}`))
-      .map(([, v]) => v.userName);
+      .map(([, v]) => v);
   }
 
   // AI generate finding — partial generation supported via the `sections` arg.
@@ -897,14 +904,28 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
             {editorTab==='Write' ? (
               <>
-                {getTypersForField(fieldTab.toLowerCase()).length > 0 && (
-                  <div style={{ padding: '4px 24px', background: 'color-mix(in srgb, var(--accent) 8%, transparent)', fontSize: 11, color: 'var(--accent)', borderBottom: '1px solid color-mix(in srgb, var(--accent) 20%, transparent)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ display: 'inline-flex', gap: 2 }}>
-                      {[0,1,2].map(i => <span key={i} style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block', animation: `noteDot 1.2s ${i*0.2}s ease-in-out infinite` }} />)}
-                    </span>
-                    {getTypersForField(fieldTab.toLowerCase()).join(', ')} {getTypersForField(fieldTab.toLowerCase()).length === 1 ? 'is' : 'are'} editing {fieldTab}…
-                  </div>
-                )}
+                {(() => {
+                  const fieldTypersList = getTypersForField(fieldTab.toLowerCase());
+                  if (fieldTypersList.length === 0) return null;
+                  return (
+                    <div style={{ padding: '5px 24px', background: 'var(--bg-1)', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      {fieldTypersList.map((t, i) => (
+                        <span key={i} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '2px 7px', borderRadius: 'var(--r-xs)',
+                          background: `${t.userColor}1a`, border: `1px solid ${t.userColor}55`,
+                          color: t.userColor, fontSize: 10.5, fontWeight: 600,
+                        }}>
+                          <span className="caret-pulse" style={{ display: 'inline-block', width: 3, height: 9, background: t.userColor }} />
+                          {t.userName}
+                        </span>
+                      ))}
+                      <span style={{ fontSize: 10.5, color: 'var(--ink-3)', fontStyle: 'italic' }}>
+                        editing {fieldTab}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <textarea
                   ref={textareaRef}
                   value={currentValue()}

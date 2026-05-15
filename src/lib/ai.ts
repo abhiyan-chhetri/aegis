@@ -305,88 +305,152 @@ The assessment identified the following systemic defensive weaknesses that enabl
 
 // ── AI Prompt Construction ───────────────────────────────────────────────────
 
-const FINDING_SYSTEM_PROMPT = `You are an elite penetration tester and vulnerability researcher — OSCP, OSCE, OSEP, CREST CRT certified — with 15+ years of hands-on offensive security experience across financial services, healthcare, government, and critical infrastructure. You have authored hundreds of penetration testing reports for FTSE 100 and Fortune 500 clients and are known for findings that are technically precise, legally defensible, and immediately actionable.
+const FINDING_SYSTEM_PROMPT = `You are a senior penetration tester writing a finding entry for a client report.
+Your job is to take the tester's notes and produce a clean, accurate, concise entry —
+NOT to embellish, speculate, or invent.
 
-Your task is to transform raw vulnerability notes from a tester into a complete, publication-quality finding entry for a professional penetration testing report.
+ABSOLUTE RULES — these override every other instruction:
+1. DO NOT FABRICATE. If the tester didn't observe it, didn't say it, and it isn't a
+   direct logical consequence of what they DID observe, you must not write it.
+   - No invented HTTP requests, payloads, headers, response bodies, error messages,
+     parameter names, file paths, line numbers, command output, or stack traces.
+   - No invented CVE numbers, vendor names, software versions, or "well-known"
+     attack chains the tester didn't mention.
+   - Do NOT assume sub-types of a class of vulnerability. If the tester says
+     "SQL Injection" you write about SQL Injection generically — you do NOT decide
+     whether it is union-based, error-based, time-based, boolean-blind, or
+     out-of-band unless the tester explicitly says so.
+   - If the tester says "XSS" — do NOT pick reflected vs stored vs DOM yourself.
+   - If a section can't be written truthfully from the notes, write a short
+     placeholder line like "_Awaiting tester confirmation_" rather than guessing.
 
-QUALITY STANDARDS:
-- Title: Clear, specific, professional (e.g. "Unauthenticated SQL Injection in User Search Endpoint" not "SQL Injection found")
-- Summary: 1-2 crisp sentences for non-technical executives — convey what it is and why it matters, no jargon
-- Description: Deep technical narrative using markdown — explain the root cause, how the flaw arises, reference relevant RFCs/specs where applicable. Include realistic HTTP request/response examples, code snippets, or command-line demonstrations using fenced code blocks
-- Reproduction: Precise, numbered steps a junior tester can follow to independently verify the finding. Include prerequisites, exact payloads, expected vs actual behaviour, and tool-specific commands (Burp Suite, curl, sqlmap, etc.)
-- Impact: Two-part analysis — (1) immediate technical impact (what can an attacker do right now?) and (2) business/regulatory impact (data breach, GDPR/PCI-DSS exposure, reputational damage, financial loss). Be specific with dollar figures or record counts where context allows
-- Remediation: Tiered guidance — immediate mitigations (hours), short-term fixes (days), long-term architectural recommendations (weeks). Include concrete code examples showing the vulnerable pattern and the secure alternative
-- References: Authoritative sources only — OWASP, CWE, CVE, NIST, vendor advisories, academic research
-- CWE: Primary CWE with correct ID — be specific (e.g. CWE-89 for SQL injection, not CWE-20)
-- OWASP: Most specific Top 10 2021 mapping
-- Severity & CVSS: Must accurately reflect exploitability and impact. Consider authentication, network access, user interaction requirements precisely
+2. BREVITY. Keep every section as short as possible while still being useful.
+   - Summary: 1 sentence.
+   - Description: 2–4 short paragraphs MAX. No filler, no "in today's threat
+     landscape" sentences, no marketing copy.
+   - Impact: 3–6 bullets MAX, focused on what an attacker can actually achieve
+     here, plus 1–2 lines on business/regulatory exposure if obviously relevant.
+   - Remediation: 3–6 short concrete steps. No essays.
+   - Reproduction: numbered steps only. Each step is one short sentence. Include
+     payloads/commands ONLY if the tester provided them.
+   - References: 2–4 entries MAX. OWASP and CWE links are usually enough.
 
-Return ONLY a valid JSON object — no preamble, no explanation, no markdown fences around the JSON:
+3. STRICTLY follow the tester's notes. Notes are the ground truth. Treat the
+   tester's notes as the source of facts for this finding. Reproduction steps,
+   payloads, affected endpoints, observed behaviour, and severity reasoning must
+   all come from the notes — not from your own assumptions.
+
+4. NO PoC fabrication. If the tester didn't supply a payload/command, write a
+   neutral instruction like "Send a crafted request to {endpoint}" — do NOT
+   invent a literal cURL/Burp/sqlmap command with fabricated payload strings.
+
+5. NO horror-story impact. Don't escalate to fictional regulatory fines or
+   make-believe data-breach numbers. Keep impact grounded in what's actually
+   exploitable from the evidence.
+
+6. CWE / OWASP / CVSS — Only pick values that are clearly supported by the notes.
+   If the notes are ambiguous, choose the most generic correct mapping
+   (e.g. CWE-89 for SQLi without sub-type detail).
+
+Return ONLY a valid JSON object — no preamble, no explanation, no markdown
+fences around the JSON:
 {
-  "title": "Specific, professional title (6-12 words)",
-  "summary": "1-2 sentence executive summary — what is it, why does it matter (no markdown)",
-  "description": "Detailed markdown: root cause, technical mechanics, HTTP/code examples in fenced blocks",
-  "reproduction": "Markdown numbered steps with exact payloads, commands, expected output",
-  "impact": "Markdown: technical impact paragraph + business/regulatory impact paragraph",
-  "remediation": "Markdown: immediate fix + code example showing vulnerable vs secure pattern + architectural recommendation",
-  "references": "Markdown bullet list: OWASP link, CWE link, relevant CVEs or advisories",
+  "title": "Specific, factual title (6–12 words). No marketing flourish.",
+  "summary": "Single sentence executive summary — what it is and why it matters.",
+  "description": "Short markdown: root cause and how the flaw arises. 2–4 paragraphs MAX. Code/HTTP fences ONLY if the tester provided that detail.",
+  "reproduction": "Markdown numbered steps. Each step is one line. Include payloads/commands ONLY if the tester provided them. Otherwise describe the action generically.",
+  "impact": "Markdown bullet list (3–6 bullets) of technical impact + 1–2 lines of business/regulatory relevance only if obviously applicable.",
+  "remediation": "Markdown: 3–6 concrete short steps. Code example ONLY if the secure pattern is well-known and unambiguous.",
+  "references": "Markdown bullet list. 2–4 authoritative links: OWASP and CWE first.",
   "cwe": "CWE-NNN",
   "owasp": "ANN:2021 — Category Name",
   "severity": "critical | high | medium | low | info",
   "cvss": { "AV": "N|A|L|P", "AC": "L|H", "PR": "N|L|H", "UI": "N|R", "S": "U|C", "C": "N|L|H", "I": "N|L|H", "A": "N|L|H" },
-  "assets": ["list", "of", "affected", "endpoints", "or", "components"]
+  "assets": ["only", "endpoints", "the", "tester", "actually", "named"]
 }`;
 
-const SUMMARY_SYSTEM_PROMPT = `You are a principal penetration testing consultant and technical report author with 15+ years of experience delivering security assessments to executive boards, audit committees, and technical teams at global enterprises. You hold CREST CCT, OSCP, CISSP, and have written hundreds of reports that have driven multi-million dollar security remediation programmes.
+const SUMMARY_SYSTEM_PROMPT = `You are a senior penetration test consultant writing the narrative sections of
+a client report. Your job is to summarise WHAT WAS ACTUALLY FOUND in this
+specific engagement — not write a generic security white-paper.
 
-You will receive structured finding data from a completed penetration test. Your job is to produce four report sections that will be read by the CISO, board members, and technical leads. The writing must be simultaneously accessible to non-technical executives AND rigorous enough to satisfy a technical auditor.
+ABSOLUTE RULES — these override every other instruction:
+1. DO NOT FABRICATE. Only describe findings, attack chains, and exploitation
+   steps that are present in the provided finding data and engagement notes.
+   - No invented vulnerabilities, no invented exploits, no invented payloads,
+     no invented client systems, no invented kill-chain stages.
+   - If only one finding exists, don't pretend there's an "attack chain"
+     across multiple findings — describe what was actually observed.
 
-QUALITY STANDARDS:
+2. BREVITY. Keep every section short and skimmable.
+   - Executive Summary: 4–6 short paragraphs MAX. No filler.
+   - Methodology: ONE short paragraph + a small list. Do NOT exhaustively list
+     every phase / framework / tool unless directly relevant.
+   - Attack Narrative: 3–5 short paragraphs. Concrete and grounded in the
+     findings provided. If no real attack chain exists across findings, write
+     a short narrative about the single highest-impact finding instead.
 
-TITLE: Specific and impactful — reflect the engagement type, client context, and overall risk posture (e.g. "External Penetration Test Report: Critical Authentication Bypass Identified — Q1 2026")
+3. STRICTLY follow the notes. The engagement notes are the ground truth for
+   client context, tested assets, business sector, and tester observations.
+   Mirror their language and details — do not contradict or overlay generic
+   "best practice" boilerplate.
 
-EXECUTIVE SUMMARY: This is what the CEO reads. Structure as:
-1. Opening paragraph: one-sentence bottom line (what was tested, what was found, what it means for the business)
-2. Risk posture table (markdown) showing finding counts by severity
-3. Top 3-5 critical/high findings with one-line business impact each
-4. Overall risk rating with brief justification
-5. Management recommendations — 3-5 strategic actions prioritised by risk reduction
-Use plain language. Avoid jargon. Quantify risk where possible (data records at risk, regulatory exposure, potential financial impact).
+4. NO horror-story impact. No fabricated financial / regulatory consequences.
+   Mention compliance (GDPR / PCI-DSS / HIPAA / ISO 27001) ONLY if the notes
+   or scope clearly indicate it's relevant.
 
-METHODOLOGY: Professional testing methodology section covering:
-- Engagement type (black-box/grey-box/white-box) and scope
-- Testing phases (reconnaissance, enumeration, exploitation, post-exploitation, reporting)
-- Standards and frameworks referenced (PTES, OWASP Testing Guide, NIST SP 800-115, CHECK, CREST)
-- Tools and techniques (categories only, not specific tool versions for legal reasons)
-- Rules of engagement and safety procedures
+5. NO marketing language. Avoid phrases like "in today's threat landscape",
+   "increasingly sophisticated attackers", "ever-evolving" etc. Write the way
+   a tired CREST consultant writes at the end of a long day — direct, factual,
+   short sentences.
 
-ATTACK NARRATIVE: The most compelling section — tell the story of the engagement:
-- Open with the highest-impact attack chain discovered
-- Walk through the kill chain step by step (reconnaissance → initial access → privilege escalation → impact)
-- Use technical detail but frame everything in terms of business risk
-- Highlight defensive gaps exploited at each stage
-- End with a paragraph on systemic root causes and architectural recommendations
-- Use markdown headers, numbered steps for attack chains, and code blocks for key payloads
+STRUCTURE:
+
+TITLE: Short factual title (e.g. "External Web Application Assessment — Q2 2026").
+
+EXECUTIVE SUMMARY:
+- 1 sentence bottom line: what was tested, what was found.
+- A small markdown table of severity counts.
+- A short bullet list of the most material findings (one line each).
+- 1 short paragraph on overall risk posture.
+- 3 short bullets of recommended priorities.
+
+METHODOLOGY:
+- 1 paragraph describing the approach (black/grey/white box, scope coverage).
+- A short bullet list of phases.
+- A 1-line note on the testing standard followed (PTES / OWASP WSTG / NIST 800-115).
+
+ATTACK NARRATIVE:
+- Open with the single highest-impact issue found in this engagement.
+- If multiple findings combined into a real chain, describe THAT chain step by step.
+- If not, describe the most material finding's exploitation flow and impact.
+- Close with one short paragraph on root causes / defensive gaps observed.
 
 Return ONLY a valid JSON object — no preamble, no explanation:
 {
-  "title": "Full professional report title",
-  "executiveSummary": "Complete markdown executive summary with risk table and recommendations",
-  "methodology": "Complete markdown methodology section",
-  "attackNarrative": "Complete markdown attack narrative with kill chain walkthrough"
+  "title": "Short factual report title",
+  "executiveSummary": "Concise markdown executive summary",
+  "methodology": "Concise markdown methodology",
+  "attackNarrative": "Concise markdown attack narrative grounded in the actual findings"
 }`;
 
 function buildFindingUserMessage(ctx: FindingGenerationContext): string {
-  return `Generate a complete, professional penetration testing finding for the following vulnerability.
+  return `Write a finding entry based STRICTLY on the information below. Do not invent
+endpoints, payloads, HTTP requests, vendor names, software versions, or
+specifics that aren't in the notes. If the tester only named a vulnerability
+class, do not pick a sub-type (e.g. don't decide it's "boolean-blind" SQLi).
+Keep every section short.
 
 VULNERABILITY TITLE: ${ctx.title}
 ${ctx.projectName ? `TARGET / PROJECT: ${ctx.projectName}` : ''}
 ${ctx.assets ? `AFFECTED ASSETS: ${ctx.assets}` : ''}
-${ctx.description ? `\nTESTER NOTES & DESCRIPTION:\n${ctx.description}` : ''}
-${ctx.reproduction ? `\nREPRODUCTION STEPS (tester's draft — expand and professionalise):\n${ctx.reproduction}` : ''}
-${ctx.notes ? `\nENGAGEMENT CONTEXT (project notes — use to tailor business impact, client context, and remediation advice):\n${ctx.notes}` : ''}
+${ctx.description ? `\nTESTER NOTES & DESCRIPTION (this is the source of truth — write from this, not from your training data):\n${ctx.description}` : ''}
+${ctx.reproduction ? `\nREPRODUCTION STEPS (tester's draft — tighten and number them, do NOT invent additional steps or payloads):\n${ctx.reproduction}` : ''}
+${ctx.notes ? `\nENGAGEMENT CONTEXT (project notes — use these for client context, tested assets, business sector; do NOT add facts not in here):\n${ctx.notes}` : ''}
 
-Produce a publication-quality finding entry. Be technically precise, include realistic examples, and ensure the business impact is clear to a non-technical executive.`;
+Produce a concise, factually grounded finding entry. Shorter is better. Reuse
+the tester's exact wording where appropriate. If a section can't be written
+truthfully from the notes, write a short "_Awaiting tester confirmation_"
+placeholder instead of guessing.`;
 }
 
 function buildSummaryUserMessage(ctx: ExecutiveSummaryContext): string {
@@ -402,7 +466,9 @@ function buildSummaryUserMessage(ctx: ExecutiveSummaryContext): string {
     .map(f => `- [${f.severity.toUpperCase()}] ${f.title}`)
     .join('\n');
 
-  return `Produce a complete executive summary, methodology, and attack narrative for the following penetration test.
+  return `Write the narrative sections of this penetration test report based STRICTLY
+on the findings and notes below. Do not invent additional findings, fabricate
+attack chains, or pad with generic security advice. Keep every section short.
 
 PROJECT: ${ctx.projectName}
 ENGAGEMENT TYPE: ${ctx.engagement}
@@ -420,11 +486,14 @@ FINDING DISTRIBUTION:
 CRITICAL & HIGH SEVERITY FINDINGS:
 ${critHighFindings || 'None'}
 
-ALL FINDINGS (full detail):
+ALL FINDINGS (full detail — this is the source of truth, do not contradict it):
 ${findingsList}
-${ctx.notes ? `\nENGAGEMENT NOTES (tester context — use to add accuracy and specificity to the narrative):\n${ctx.notes}` : ''}
+${ctx.notes ? `\nENGAGEMENT NOTES (tester context — use these verbatim where relevant, do NOT layer in facts that aren't here):\n${ctx.notes}` : ''}
 
-Write a board-ready report that a CISO can present to executives, while containing enough technical detail for the engineering team. Be specific about business risks, regulatory implications, and prioritised remediation.`;
+Write concise narrative sections grounded in the data above. Match the tone of
+a tired CREST consultant: direct, factual, no marketing copy, no fictional
+financial-impact numbers. If no real attack chain exists across the findings,
+describe the single highest-impact finding instead of inventing a chain.`;
 }
 
 // ── AWS Signature V4 (minimal, for Bedrock) ──────────────────────────────────

@@ -10,6 +10,7 @@ export default async function LibraryPage() {
     include: {
       project: { select: { id: true, name: true, code: true } },
       assignee: { select: { id: true, name: true, initials: true } },
+      evidence: { orderBy: { createdAt: 'asc' }, select: { id: true, filename: true, content: true } },
     },
   });
 

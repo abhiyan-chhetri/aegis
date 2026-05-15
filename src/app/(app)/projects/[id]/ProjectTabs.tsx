@@ -1105,7 +1105,9 @@ function ProjectNotesEditor({
   const [editorTab, setEditorTab] = React.useState<'Write' | 'Preview'>('Write');
   const [saveStatus, setSaveStatus] = React.useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [dragOver, setDragOver] = React.useState(false);
+  const [fullscreen, setFullscreen] = React.useState(false);
   const [typers, setTypers] = React.useState<Map<string, { userName: string; userColor: string; line?: number }>>(new Map());
+  const myUserId = React.useRef<string | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const saveTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1245,6 +1247,10 @@ function ProjectNotesEditor({
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        // Capture our own user id so we can filter our own typing events out
+        if (data.type === 'connected' && data.userId) {
+          myUserId.current = data.userId;
+        }
         if ((data.type === 'content_update' && data.field === field) || (data.type === 'notes_update' && field === 'notes')) {
           const incoming = data.value ?? data.notes;
           if (typeof incoming !== 'string') return;
@@ -1263,6 +1269,8 @@ function ProjectNotesEditor({
           }
         }
         if (data.type === 'typing' && data.field === field) {
+          // Ignore our OWN echo — we never want to show "you are typing" to yourself
+          if (data.userId === myUserId.current) return;
           setTypers(prev => {
             const next = new Map(prev);
             next.set(data.userId, { userName: data.userName || 'Someone', userColor: data.userColor || '#6366f1', line: data.line });
@@ -1297,8 +1305,20 @@ function ProjectNotesEditor({
     insertAtCursor(`\n![${img.alt}](${img.dataUrl})\n`);
   }
 
+  // Fullscreen overlay support — when toggled, the editor renders fixed over
+  // the entire viewport with Esc to exit.
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
+
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={fullscreen
+      ? { position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', flexDirection: 'column', background: 'var(--bg-0)' }
+      : { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }
+    }>
       {/* Toolbar bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 16px', borderBottom: '1px solid var(--line-1)', background: 'var(--bg-0)', flexShrink: 0 }}>
         {(['Write', 'Preview'] as const).map(t => (
@@ -1343,6 +1363,18 @@ function ProjectNotesEditor({
         <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: saveStatus === 'saved' ? 'var(--status-resolved)' : saveStatus === 'saving' ? 'var(--ink-3)' : saveStatus === 'error' ? 'var(--sev-critical)' : 'var(--ink-4)' }}>
           {saveStatus === 'saving' ? 'saving…' : saveStatus === 'saved' ? '✓ saved' : saveStatus === 'error' ? 'error' : `${notes.length} chars`}
         </div>
+        {/* Fullscreen toggle */}
+        <button
+          onClick={() => setFullscreen(f => !f)}
+          title={fullscreen ? 'Exit fullscreen (Esc)' : 'Open in fullscreen'}
+          style={{
+            width: 26, height: 26, borderRadius: 'var(--r-xs)', border: 'none',
+            background: fullscreen ? 'var(--bg-2)' : 'transparent', color: 'var(--ink-2)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: 4,
+          }}
+        >
+          <Ico name={fullscreen ? 'minimize' : 'maximize'} size={13} />
+        </button>
       </div>
 
       {/* Editor / Preview area */}
