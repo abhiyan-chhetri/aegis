@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useLayoutEffect, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Ico } from '@/components/chrome/icons';
 
 // ── Layout constants ────────────────────────────────────────────────────────
@@ -10,7 +12,8 @@ const PAD_X     = 72;     // ≈ .75in
 const PAD_TOP   = 40;     // header zone
 const PAD_BOT   = 68;     // footer zone
 const CONTENT_W = PAGE_W - PAD_X * 2;  // 650px
-const CONTENT_H = PAGE_H - PAD_TOP - PAD_BOT - 10; // 963px
+const CONTENT_H = PAGE_H - PAD_TOP - PAD_BOT - 10; // 1005px usable
+const CONTINUATION_HEADER_H = 36; // px taken by "X continued" header on continuation pages
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const DEFAULT_CSS = `
@@ -209,263 +212,149 @@ function badgeCls(sev: string) {
   return sev === 'info' ? 'informational' : sev;
 }
 
-// Render inline markdown: **bold**, *italic*, `code`, _italic_, [text](url), ![alt](src), raw URLs
-// Pattern order matters — images/links/URLs are matched before underscore-italic to
-// prevent underscores inside URLs from being treated as markdown.
-function renderInline(text: string, resolveImage?: (src: string) => string | null, key?: string): React.ReactNode {
-  const INLINE_RE = /(!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<>"')\]]+|\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`)/g;
-  const parts = text.split(INLINE_RE);
-  return (
-    <React.Fragment key={key}>
-      {parts.map((p, i) => {
-        // Bold
-        if (p.startsWith('**') && p.endsWith('**') && p.length > 4)
-          return <strong key={i}>{p.slice(2, -2)}</strong>;
-        // Italic (star)
-        if (p.startsWith('*') && p.endsWith('*') && p.length > 2 && !p.startsWith('**'))
-          return <em key={i}>{p.slice(1, -1)}</em>;
-        // Italic (underscore)
-        if (p.startsWith('_') && p.endsWith('_') && p.length > 2)
-          return <em key={i}>{p.slice(1, -1)}</em>;
-        // Inline code
-        if (p.startsWith('`') && p.endsWith('`') && p.length > 2)
-          return <code key={i} className="rpt-icode">{p.slice(1, -1)}</code>;
-        // Inline image: ![alt](src)
-        const imgM = p.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-        if (imgM) {
-          const [, alt, rawSrc] = imgM;
-          let src = rawSrc;
-          if (!src.startsWith('data:') && !src.startsWith('http') && resolveImage) {
-            src = resolveImage(rawSrc) ?? rawSrc;
-          }
-          if (src.startsWith('data:') || src.startsWith('http')) {
-            return (
-              <span key={i} style={{ display: 'block', margin: '8pt 0' }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt={alt} style={{ maxWidth: '100%', maxHeight: 240, objectFit: 'contain', border: '1pt solid var(--rule)', borderRadius: 2, display: 'block' }} />
-                {alt && <span className="rpt-figure-caption"><b>Figure.</b> {alt}</span>}
-              </span>
-            );
-          }
-          // Unresolved reference — render as placeholder
-          return <em key={i} style={{ color: 'var(--ink60)', fontSize: '9pt' }}>[figure: {alt || rawSrc}]</em>;
-        }
-        // Markdown link: [text](url)
-        const linkM = p.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-        if (linkM) {
-          return (
-            <a key={i} href={linkM[2]} className="rpt-link" target="_blank" rel="noopener noreferrer">
-              {linkM[1]}
-            </a>
-          );
-        }
-        // Raw URL
-        if (/^https?:\/\//.test(p)) {
-          return (
-            <a key={i} href={p} className="rpt-link" target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>
-              {p}
-            </a>
-          );
-        }
-        return p;
-      })}
-    </React.Fragment>
-  );
+// Parse extended image alt-text for custom dimensions.
+//   ![Screenshot](src)               → defaults
+//   ![Screenshot|400](src)           → width 400px, height auto
+//   ![Screenshot|x300](src)          → width auto, height 300px
+//   ![Screenshot|400x300](src)       → width 400, height 300
+//   ![Screenshot|small](src)         → preset width (small/medium/large/full)
+function parseImgAlt(rawAlt: string): { alt: string; width?: number; height?: number; preset?: string } {
+  const pipe = rawAlt.lastIndexOf('|');
+  if (pipe === -1) return { alt: rawAlt };
+  const altText = rawAlt.slice(0, pipe).trim();
+  const dim = rawAlt.slice(pipe + 1).trim();
+
+  // Preset sizes
+  const presetW: Record<string, number> = { small: 240, medium: 380, large: 520, full: 650 };
+  if (dim in presetW) return { alt: altText, width: presetW[dim], preset: dim };
+
+  // Numeric WxH / W / xH
+  const m = dim.match(/^(\d*)\s*x\s*(\d*)$/i) || dim.match(/^(\d+)$/);
+  if (m) {
+    const w = m[1] ? parseInt(m[1], 10) : undefined;
+    const h = m[2] !== undefined && m[2] !== '' ? parseInt(m[2], 10) : undefined;
+    if (w || h) return { alt: altText, width: w, height: h };
+  }
+  return { alt: rawAlt };
 }
 
-// ── Syntax highlighting helpers (report) ──────────────────────────────────────
-function escHtml(s: string) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-// Only apply fn() to text nodes — never inside <tag> attributes
-function rptOutsideTags(html: string, fn: (t: string) => string): string {
-  return html.replace(/(<[^>]*>|[^<]+)/g, m => m[0] === '<' ? m : fn(m));
-}
-const RPT_KEYWORDS = ['function','const','let','var','if','else','for','while','return','import','export','default','class','extends','async','await','try','catch','finally','throw','new','delete','typeof','instanceof','null','undefined','true','false','void','this','super','static','def','print','from','in','is','not','and','or','pass','with','as','lambda','yield','SELECT','FROM','WHERE','INSERT','UPDATE','DELETE','CREATE','DROP','TABLE','JOIN','INNER','LEFT','RIGHT','ON','GROUP','ORDER','BY','HAVING','LIMIT','DISTINCT','INDEX','ALTER','ADD'];
-function rptHlCode(code: string, lang: string): string {
-  let h = escHtml(code);
-  if (!lang || lang === 'text' || lang === 'plain') return h;
-  // ① comments FIRST — before any #RRGGBB color values exist in the string
-  h = h.replace(/(\/\*[\s\S]*?\*\/)/g, '<span class="c">$1</span>');
-  h = h.replace(/(\/\/[^\n]+)/g, '<span class="c">$1</span>');
-  // # shell/python comments: only at line start (^+gm) — never mid-line color codes
-  h = h.replace(/^([ \t]*#[^\n]*)/gm, '<span class="c">$1</span>');
-  // ② strings
-  h = h.replace(/(&quot;(?:[^&]|&(?!quot;))*?&quot;|&#39;[^&#\n]*?&#39;)/g, '<span class="s">$1</span>');
-  // ③ keywords — outsideTags so we never match inside class="k" or other attributes
-  const kwRe = new RegExp(`\\b(${RPT_KEYWORDS.join('|')})\\b`, 'g');
-  h = rptOutsideTags(h, t => t.replace(kwRe, '<span class="k">$1</span>'));
-  // ④ numbers — outsideTags so we never corrupt 600 inside font-weight:600
-  h = rptOutsideTags(h, t => t.replace(/\b(\d+\.?\d*(?:[eE][+-]?\d+)?)\b/g, '<span class="n">$1</span>'));
-  return h;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+//  Markdown rendering — uses react-markdown + remark-gfm under the hood for
+//  proper CommonMark + GFM support (tables, autolinks, strikethrough, task
+//  lists, etc.). We split the source markdown into top-level blocks first so
+//  the paginator can pack each block individually onto pages without ever
+//  splitting one mid-element.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Full markdown → React nodes renderer
-// resolveImage: optional fn to map a src string → actual URL (for evidence ID references)
-function renderMarkdown(text: string, resolveImage?: (src: string) => string | null): React.ReactNode {
-  if (!text?.trim()) return null;
-  const nodes: React.ReactNode[] = [];
-  let k = 0;
-
-  // Split on fenced code blocks first
+// Split markdown into top-level blocks (paragraphs, fenced code blocks, lists,
+// headings) so each block can be paginated independently. Fenced code blocks
+// are preserved as single blocks even if they contain blank lines.
+function splitMarkdownIntoBlocks(text: string): string[] {
+  if (!text?.trim()) return [];
+  const blocks: string[] = [];
+  // Pull fenced code blocks out first so blank lines inside them don't split them.
   const segments = text.split(/(```[\w]*\n?[\s\S]*?```)/g);
-
   for (const seg of segments) {
-    // Fenced code block
-    const fenceMatch = seg.match(/^```([\w]*)\n?([\s\S]*?)```$/);
-    if (fenceMatch) {
-      const lang = fenceMatch[1] || '';
-      const highlighted = rptHlCode(fenceMatch[2].trimEnd(), lang);
-      nodes.push(
-        <pre
-          key={k++}
-          className="rpt-pre"
-          dangerouslySetInnerHTML={{ __html:
-            (lang ? `<span class="rpt-pre-lang">${escHtml(lang)}</span>` : '') + highlighted
-          }}
-        />
-      );
+    if (seg.startsWith('```')) {
+      const trimmed = seg.trim();
+      if (trimmed) blocks.push(trimmed);
       continue;
     }
-
-    // Process paragraph blocks separated by blank lines
-    const paraBlocks = seg.split(/\n{2,}/);
-    for (const block of paraBlocks) {
-      const trimmed = block.trim();
-      if (!trimmed) continue;
-
-      const lines = trimmed.split('\n');
-
-      // Detect list blocks
-      const isBullet  = lines.every(l => /^[-*•+]\s/.test(l.trimStart()) || !l.trim());
-      const isOrdered = lines.every(l => /^\d+[.)]\s/.test(l.trimStart()) || !l.trim());
-
-      if (isBullet) {
-        nodes.push(
-          <ul key={k++} className="rpt-ul">
-            {lines.filter(l => l.trim()).map((l, i) =>
-              <li key={i}>{renderInline(l.trimStart().replace(/^[-*•+]\s/, ''), resolveImage)}</li>
-            )}
-          </ul>
-        );
-        continue;
-      }
-      if (isOrdered) {
-        nodes.push(
-          <ol key={k++} className="rpt-ol">
-            {lines.filter(l => l.trim()).map((l, i) =>
-              <li key={i}>{renderInline(l.trimStart().replace(/^\d+[.)]\s/, ''), resolveImage)}</li>
-            )}
-          </ol>
-        );
-        continue;
-      }
-
-      // Mixed line block — process line by line
-      let listLines: string[] = [];
-      let listMode: 'ul' | 'ol' | null = null;
-
-      const flushList = () => {
-        if (!listLines.length) return;
-        if (listMode === 'ol') {
-          nodes.push(
-            <ol key={k++} className="rpt-ol">
-              {listLines.map((l, i) => <li key={i}>{renderInline(l, resolveImage)}</li>)}
-            </ol>
-          );
-        } else {
-          nodes.push(
-            <ul key={k++} className="rpt-ul">
-              {listLines.map((l, i) => <li key={i}>{renderInline(l, resolveImage)}</li>)}
-            </ul>
-          );
-        }
-        listLines = []; listMode = null;
-      };
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) { flushList(); continue; }
-
-        // Headings
-        const h1 = line.match(/^#\s+(.*)/);
-        const h2 = line.match(/^##\s+(.*)/);
-        const h3 = line.match(/^###\s+(.*)/);
-        if (h3) {
-          flushList();
-          nodes.push(<div key={k++} className="rpt-md-h3">{renderInline(h3[1], resolveImage)}</div>);
-          continue;
-        }
-        if (h2) {
-          flushList();
-          nodes.push(<div key={k++} className="rpt-md-h2">{renderInline(h2[1], resolveImage)}</div>);
-          continue;
-        }
-        if (h1) {
-          flushList();
-          nodes.push(<div key={k++} className="rpt-md-h1">{renderInline(h1[1], resolveImage)}</div>);
-          continue;
-        }
-
-        // Standalone image line: ![alt](src)
-        const imgLine = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-        if (imgLine) {
-          flushList();
-          const [, alt, rawSrc] = imgLine;
-          let src = rawSrc;
-          if (!src.startsWith('data:') && !src.startsWith('http') && resolveImage) {
-            src = resolveImage(rawSrc) ?? rawSrc;
-          }
-          if (src.startsWith('data:') || src.startsWith('http')) {
-            nodes.push(
-              <div key={k++} className="rpt-figure">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt={alt} style={{ maxWidth: '100%', maxHeight: 220, objectFit: 'contain', border: '1pt solid var(--rule)', borderRadius: 2, display: 'block' }} />
-                {alt && <div className="rpt-figure-caption"><b>Figure.</b> {alt}</div>}
-              </div>
-            );
-          } else {
-            nodes.push(<em key={k++} style={{ color: 'var(--ink60)', fontSize: '9pt' }}>[figure: {alt || rawSrc}]</em>);
-          }
-          continue;
-        }
-
-        // Bullet list line
-        if (/^[-*•+]\s/.test(line)) {
-          if (listMode === 'ol') flushList();
-          listMode = 'ul';
-          listLines.push(line.replace(/^[-*•+]\s/, ''));
-          continue;
-        }
-
-        // Ordered list line
-        if (/^\d+[.)]\s/.test(line)) {
-          if (listMode === 'ul') flushList();
-          listMode = 'ol';
-          listLines.push(line.replace(/^\d+[.)]\s+/, ''));
-          continue;
-        }
-
-        // Blockquote
-        if (line.startsWith('> ')) {
-          flushList();
-          nodes.push(
-            <div key={k++} className="rpt-callout">
-              <p style={{ margin: 0 }}>{renderInline(line.slice(2), resolveImage)}</p>
-            </div>
-          );
-          continue;
-        }
-
-        // Regular paragraph line
-        flushList();
-        nodes.push(<p key={k++} className="rpt-p">{renderInline(line, resolveImage)}</p>);
-      }
-      flushList();
+    // Plain segments: split on blank lines for paragraph-level blocks
+    for (const para of seg.split(/\n{2,}/)) {
+      const trimmed = para.trim();
+      if (trimmed) blocks.push(trimmed);
     }
   }
+  return blocks;
+}
 
-  return <>{nodes}</>;
+// react-markdown component overrides — applies our report's CSS class names
+// and adds custom behaviour (image dimensions via `![alt|WxH](src)` syntax,
+// link styling, evidence-id resolution for finding images).
+type ResolveImage = (src: string) => string | null;
+type AnyProps = Record<string, unknown> & { node?: { children?: Array<{ type: string }> }; children?: React.ReactNode };
+
+function makeMarkdownComponents(resolveImage?: ResolveImage) {
+  return {
+    p: ({ node, children, ...rest }: AnyProps) => {
+      // Image-only paragraph → unwrap so the figure renders as a block (no <p> wrapper)
+      if (node?.children?.length === 1 && node.children[0].type === 'image') {
+        return <>{children}</>;
+      }
+      return <p className="rpt-p" {...rest}>{children}</p>;
+    },
+    ul: ({ children, ...rest }: AnyProps) => <ul className="rpt-ul" {...rest}>{children}</ul>,
+    ol: ({ children, ...rest }: AnyProps) => <ol className="rpt-ol" {...rest}>{children}</ol>,
+    h1: ({ children }: AnyProps) => <div className="rpt-md-h1">{children}</div>,
+    h2: ({ children }: AnyProps) => <div className="rpt-md-h2">{children}</div>,
+    h3: ({ children }: AnyProps) => <div className="rpt-md-h3">{children}</div>,
+    h4: ({ children }: AnyProps) => <div className="rpt-md-h3">{children}</div>,
+    h5: ({ children }: AnyProps) => <div className="rpt-md-h3">{children}</div>,
+    h6: ({ children }: AnyProps) => <div className="rpt-md-h3">{children}</div>,
+    blockquote: ({ children }: AnyProps) => <div className="rpt-callout">{children}</div>,
+    table: ({ children, ...rest }: AnyProps) => <table className="rpt-table" {...rest}>{children}</table>,
+    a: ({ children, href, ...rest }: AnyProps & { href?: string }) => (
+      <a href={href} className="rpt-link" target="_blank" rel="noopener noreferrer" {...rest}>{children}</a>
+    ),
+    code: ({ className, children, ...rest }: AnyProps & { className?: string }) => {
+      // Block-level code (inside <pre>) carries a `language-xxx` class from remark
+      const isBlock = !!className && /(^|\s)language-/.test(className);
+      if (isBlock) return <code className={className} {...rest}>{children}</code>;
+      return <code className="rpt-icode" {...rest}>{children}</code>;
+    },
+    pre: ({ children }: AnyProps) => <pre className="rpt-pre">{children}</pre>,
+    img: ({ alt, src }: AnyProps & { alt?: string; src?: string }) => {
+      const parsed = parseImgAlt(alt || '');
+      let finalSrc = src || '';
+      if (!finalSrc.startsWith('data:') && !finalSrc.startsWith('http') && resolveImage) {
+        finalSrc = resolveImage(finalSrc) ?? finalSrc;
+      }
+      if (!finalSrc.startsWith('data:') && !finalSrc.startsWith('http')) {
+        return <em style={{ color: 'var(--ink60)', fontSize: '9pt' }}>[figure: {parsed.alt || src}]</em>;
+      }
+      const imgStyle: React.CSSProperties = {
+        maxWidth: '100%',
+        maxHeight: parsed.height ? `${parsed.height}px` : (parsed.width ? undefined : 220),
+        width:  parsed.width  ? `${parsed.width}px`  : undefined,
+        height: parsed.height ? `${parsed.height}px` : undefined,
+        objectFit: 'contain',
+        border: '1pt solid var(--rule)',
+        borderRadius: 2,
+        display: 'block',
+      };
+      return (
+        <div className="rpt-figure">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={finalSrc} alt={parsed.alt} style={imgStyle} />
+          {parsed.alt && <div className="rpt-figure-caption"><b>Figure.</b> {parsed.alt}</div>}
+        </div>
+      );
+    },
+  };
+}
+
+const REMARK_PLUGINS = [remarkGfm];
+
+// Render markdown source into an array of top-level block nodes — each is
+// a fully-formed React element that the paginator can measure and pack.
+function renderMarkdownToNodes(text: string, resolveImage?: ResolveImage): React.ReactNode[] {
+  const blocks = splitMarkdownIntoBlocks(text);
+  if (blocks.length === 0) return [];
+  const components = makeMarkdownComponents(resolveImage);
+  return blocks.map((block, i) => (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    <ReactMarkdown key={i} remarkPlugins={REMARK_PLUGINS} components={components as any}>
+      {block}
+    </ReactMarkdown>
+  ));
+}
+
+// Backwards-compatible wrapper returning a single ReactNode (used when the
+// caller doesn't need access to the individual blocks for pagination).
+function renderMarkdown(text: string, resolveImage?: ResolveImage): React.ReactNode {
+  const nodes = renderMarkdownToNodes(text, resolveImage);
+  return nodes.length > 0 ? <>{nodes}</> : null;
 }
 
 // ── Badge ─────────────────────────────────────────────────────────────────────
@@ -586,29 +475,172 @@ function Page({
   );
 }
 
-// ── FindingPageSet — measure + paginate a single finding ─────────────────────
-function FindingPageSet({
-  f, project, startPage, totalPages, onPageCount,
+// ─────────────────────────────────────────────────────────────────────────────
+//  PaginatedBlocks — the ONLY paginator in this file.
+//
+//  Takes an array of self-contained React nodes ("blocks") and renders them
+//  across as many pages as needed. The algorithm is identical to how Word and
+//  every other word processor does it:
+//
+//     1. Render every block once in a hidden measurement area to learn each
+//        block's actual rendered height (including margins).
+//     2. Greedy bin-packing: walk the blocks; while the next block still fits
+//        on the current page, add it. If it doesn't fit, start a new page and
+//        put the block at the top of it.
+//     3. Edge case: if a single block is taller than a full page, it goes on
+//        its own page and visually overflows the page bottom (unavoidable).
+//
+//  Each visible page renders ONLY the blocks assigned to it — no translate,
+//  no clipping, no duplication. Blank space at the bottom of a page is fine.
+// ─────────────────────────────────────────────────────────────────────────────
+function PaginatedBlocks({
+  id, blocks, startPage, totalPages, project, logoUrl = '', onPageCount,
+  continuationHeader,
 }: {
-  f: Finding; project: Project; startPage: number; totalPages: number;
+  id: string;
+  blocks: React.ReactNode[];
+  startPage: number;
+  totalPages: number;
+  project: Project;
+  logoUrl?: string;
   onPageCount: (id: string, n: number) => void;
+  // Optional banner rendered at the top of every continuation page
+  // (e.g. "Finding F-001 continued"). The component automatically reserves
+  // space for it when packing.
+  continuationHeader?: React.ReactNode;
 }) {
-  const [pageCount, setPageCount] = useState(1);
+  const [pages, setPages] = useState<number[][]>(() => [blocks.map((_, i) => i)]);
   const measureRef = useRef<HTMLDivElement>(null);
 
+  // Re-measure whenever the block list changes. Each block is rendered inside
+  // its OWN `display: flow-root` wrapper so margin-collapse is disabled — every
+  // margin (top + bottom) is fully counted in the wrapper's measured height.
+  // This deliberately OVERestimates compared to the actual page render (where
+  // adjacent margins collapse and save a few px) — that's the point. Conservative
+  // packing → guaranteed no clipping. The cost is a little extra whitespace at
+  // the bottom of some pages, which is exactly how Word handles it.
+  useLayoutEffect(() => {
+    const container = measureRef.current;
+    if (!container) return;
+
+    const wrappers = Array.from(container.children) as HTMLElement[];
+    if (wrappers.length === 0) {
+      setPages([[]]);
+      onPageCount(id, 1);
+      return;
+    }
+
+    const heights: number[] = wrappers.map(el => el.getBoundingClientRect().height);
+
+    // Page-budget reservations:
+    //   first page  → full CONTENT_H
+    //   subsequent  → CONTENT_H minus continuation-header height (if provided)
+    const firstBudget = CONTENT_H;
+    const contBudget  = continuationHeader ? CONTENT_H - CONTINUATION_HEADER_H : CONTENT_H;
+
+    const result: number[][] = [];
+    let cur: number[] = [];
+    let curH = 0;
+    let budget = firstBudget;
+
+    for (let i = 0; i < heights.length; i++) {
+      const h = heights[i];
+
+      // Single block bigger than a page → put alone on its own page (overflows
+      // visually but it has no choice — the user would need to shorten it).
+      if (h > budget && cur.length === 0) {
+        result.push([i]);
+        budget = contBudget;
+        continue;
+      }
+
+      if (curH + h > budget && cur.length > 0) {
+        // Doesn't fit — flush current page, start fresh.
+        result.push(cur);
+        cur = [i];
+        curH = h;
+        budget = contBudget;
+      } else {
+        cur.push(i);
+        curH += h;
+      }
+    }
+    if (cur.length > 0) result.push(cur);
+    if (result.length === 0) result.push([]);
+
+    setPages(result);
+    onPageCount(id, result.length);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, blocks.length]);
+
+  return (
+    <>
+      {/* Hidden measurement: each block in its own `flow-root` wrapper so margins
+          are contained and the wrapper's height fully accounts for them. */}
+      <div
+        ref={measureRef}
+        className="rpt-page"
+        style={{
+          position: 'fixed', left: -9999, top: -9999, width: CONTENT_W,
+          visibility: 'hidden', pointerEvents: 'none', overflow: 'hidden',
+        }}
+      >
+        {blocks.map((b, i) => (
+          <div key={i} style={{ display: 'flow-root' }}>{b}</div>
+        ))}
+      </div>
+
+      {/* Visible pages — each renders only its assigned blocks, in order. */}
+      {pages.map((indices, pi) => (
+        <Page
+          key={pi}
+          pageNum={startPage + pi}
+          totalPages={totalPages}
+          project={project}
+          logoUrl={logoUrl}
+        >
+          {pi > 0 && continuationHeader}
+          {indices.map(idx => (
+            <React.Fragment key={idx}>{blocks[idx]}</React.Fragment>
+          ))}
+        </Page>
+      ))}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Block builders — turn finding/section content into flat arrays of self-
+//  contained React nodes that the paginator can pack into pages.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A heading + thin rule. Used at the top of every finding section
+// (Description, Impact, …). Keeps the heading and rule together as one block.
+function FindingSectionHead({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rpt-fsec" style={{ marginBottom: 0 }}>
+      <div className="rpt-fsec-hd">{children}</div>
+      <div className="rpt-fsec-rule" />
+    </div>
+  );
+}
+
+// Build the block list for one finding. Each section header is its own block,
+// each markdown paragraph/code-block/image is its own block — so the paginator
+// can place them individually without ever splitting one mid-element.
+function buildFindingBlocks(f: Finding): React.ReactNode[] {
   const assets: string[] = (() => { try { return JSON.parse(f.assets); } catch { return []; } })();
   const evidenceItems = f.evidence || [];
-
-  // Resolve evidence IDs / filenames → base64 content for inline images in markdown
-  const resolveImage = useCallback((src: string): string | null => {
+  const resolveImage = (src: string): string | null => {
     const ev = evidenceItems.find(e => e.id === src || e.filename === src);
     return ev?.content ?? null;
-  }, [evidenceItems]);
+  };
 
-  // All finding content as a single React tree
-  const allContent = (
-    <>
-      {/* ── Header block ── */}
+  const blocks: React.ReactNode[] = [];
+
+  // 1. Finding header — code, title, rules, and metadata grid kept together.
+  blocks.push(
+    <div key="finding-head">
       <div className="rpt-fid">Finding&nbsp;&nbsp;<b>{f.code}</b></div>
       <div className="rpt-ftitle">{f.title}</div>
       <div className="rpt-frules"><div className="a" /><div className="b" /></div>
@@ -624,168 +656,49 @@ function FindingPageSet({
             </div>
           </>
         )}
-        {f.cwe      && <><div className="k">CWE</div>      <div><code className="rpt-icode">{f.cwe}</code></div></>}
-        {f.owasp    && <><div className="k">OWASP</div>    <div><code className="rpt-icode">{f.owasp}</code></div></>}
+        {f.cwe       && <><div className="k">CWE</div>      <div><code className="rpt-icode">{f.cwe}</code></div></>}
+        {f.owasp     && <><div className="k">OWASP</div>    <div><code className="rpt-icode">{f.owasp}</code></div></>}
         {f.component && <><div className="k">Component</div><div><code className="rpt-icode">{f.component}</code></div></>}
         {assets.length > 0 && <><div className="k">Affected</div><div><code className="rpt-icode">{assets[0]}</code></div></>}
       </div>
-
-      {/* ── Description ── */}
-      {f.description?.trim() && (
-        <div className="rpt-fsec">
-          <div className="rpt-fsec-hd">Description</div>
-          <div className="rpt-fsec-rule" />
-          {renderMarkdown(f.description, resolveImage)}
-        </div>
-      )}
-
-      {/* ── Affected Scope (extra assets) ── */}
-      {assets.length > 1 && (
-        <div className="rpt-fsec">
-          <div className="rpt-fsec-hd">Affected Scope</div>
-          <div className="rpt-fsec-rule" />
-          <ul className="rpt-ul">
-            {assets.map((a, i) => <li key={i}><code className="rpt-icode">{a}</code></li>)}
-          </ul>
-        </div>
-      )}
-
-      {/* ── Impact ── */}
-      {f.impact?.trim() && (
-        <div className="rpt-fsec">
-          <div className="rpt-fsec-hd">Impact</div>
-          <div className="rpt-fsec-rule" />
-          {renderMarkdown(f.impact, resolveImage)}
-        </div>
-      )}
-
-      {/* ── Recommendations ── */}
-      {f.remediation?.trim() && (
-        <div className="rpt-fsec">
-          <div className="rpt-fsec-hd">Recommendations</div>
-          <div className="rpt-fsec-rule" />
-          {renderMarkdown(f.remediation, resolveImage)}
-        </div>
-      )}
-
-      {/* ── Technical Details / Reproduction ── */}
-      {f.reproduction?.trim() && (
-        <div className="rpt-fsec">
-          <div className="rpt-fsec-hd">Technical Details</div>
-          <div className="rpt-fsec-rule" />
-          {renderMarkdown(f.reproduction, resolveImage)}
-        </div>
-      )}
-
-      {/* ── References ── */}
-      {f.references?.trim() && (
-        <div className="rpt-fsec">
-          <div className="rpt-fsec-hd">References</div>
-          <div className="rpt-fsec-rule" />
-          <div style={{ fontSize: '8.5pt', color: 'var(--ink60)', lineHeight: 1.7 }}>
-            {renderMarkdown(f.references, resolveImage)}
-          </div>
-        </div>
-      )}
-    </>
+    </div>
   );
 
-  // Measure total height, compute page count
-  useLayoutEffect(() => {
-    const el = measureRef.current;
-    if (!el) return;
-    const h = el.scrollHeight;
-    const n = Math.max(1, Math.ceil(h / CONTENT_H));
-    setPageCount(n);
-    onPageCount(f.id, n);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.id, evidenceItems.length]);
+  // Helper: push a "Section Heading" + flattened markdown nodes as separate blocks
+  const pushSection = (key: string, label: string, markdown: string) => {
+    if (!markdown?.trim()) return;
+    blocks.push(<FindingSectionHead key={`${key}-hd`}>{label}</FindingSectionHead>);
+    const nodes = renderMarkdownToNodes(markdown, resolveImage);
+    nodes.forEach((node, i) => blocks.push(<React.Fragment key={`${key}-${i}`}>{node}</React.Fragment>));
+  };
 
-  return (
-    <>
-      {/* Hidden measurement div (off-screen, inherits rpt-page font metrics) */}
-      <div
-        className="rpt-page"
-        style={{ position: 'fixed', left: -9999, top: -9999, width: CONTENT_W, visibility: 'hidden', pointerEvents: 'none', overflow: 'visible' }}
-      >
-        <div ref={measureRef}>{allContent}</div>
+  pushSection('desc',  'Description',      f.description);
+
+  if (assets.length > 1) {
+    blocks.push(<FindingSectionHead key="scope-hd">Affected Scope</FindingSectionHead>);
+    blocks.push(
+      <ul key="scope-list" className="rpt-ul">
+        {assets.map((a, i) => <li key={i}><code className="rpt-icode">{a}</code></li>)}
+      </ul>
+    );
+  }
+
+  pushSection('impact', 'Impact',           f.impact);
+  pushSection('rem',    'Recommendations',  f.remediation);
+  pushSection('repro',  'Technical Details', f.reproduction);
+
+  // References — smaller font, wrap in a styled container at the block level.
+  if (f.references?.trim()) {
+    blocks.push(<FindingSectionHead key="refs-hd">References</FindingSectionHead>);
+    const refNodes = renderMarkdownToNodes(f.references, resolveImage);
+    refNodes.forEach((node, i) => blocks.push(
+      <div key={`refs-${i}`} style={{ fontSize: '8.5pt', color: 'var(--ink60)', lineHeight: 1.7 }}>
+        {node}
       </div>
+    ));
+  }
 
-      {/* One visible page per measured slice */}
-      {Array.from({ length: pageCount }).map((_, pi) => (
-        <Page
-          key={pi}
-          pageNum={startPage + pi}
-          totalPages={totalPages}
-          project={project}
-        >
-          {pi > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div className="rpt-fid">Finding&nbsp;&nbsp;<b>{f.code}</b>&nbsp;&nbsp;<em style={{ fontWeight: 400, letterSpacing: 0 }}>continued</em></div>
-              <div style={{ height: '.4pt', background: 'var(--rule)', margin: '6px 0 0' }} />
-              <div style={{ height: '1.4pt', background: 'var(--rpt-accent)', marginTop: 1, marginBottom: 10 }} />
-            </div>
-          )}
-          {/* Clip window scrolled to the correct vertical slice */}
-          <div style={{ height: CONTENT_H, overflow: 'hidden', position: 'relative' }}>
-            <div style={{ transform: `translateY(${-pi * CONTENT_H}px)`, transformOrigin: 'top left' }}>
-              {allContent}
-            </div>
-          </div>
-        </Page>
-      ))}
-    </>
-  );
-}
-
-// ── Generic paginator for long text sections (exec summary, methodology, etc) ─
-function PagedSection({
-  id, startPage, totalPages, project, children, logoUrl = '', onPageCount,
-}: {
-  id: string; startPage: number; totalPages: number; project: Project;
-  children: React.ReactNode; logoUrl?: string;
-  onPageCount: (id: string, n: number) => void;
-}) {
-  const [pageCount, setPageCount] = useState(1);
-  const measureRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const el = measureRef.current;
-    if (!el) return;
-    const h = el.scrollHeight;
-    const n = Math.max(1, Math.ceil(h / CONTENT_H));
-    setPageCount(n);
-    onPageCount(id, n);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  return (
-    <>
-      {/* Hidden measurement div — same width as page content */}
-      <div
-        className="rpt-page"
-        style={{ position: 'fixed', left: -9999, top: -9999, width: CONTENT_W, visibility: 'hidden', pointerEvents: 'none', overflow: 'visible' }}
-      >
-        <div ref={measureRef}>{children}</div>
-      </div>
-      {/* One visible page per measured slice */}
-      {Array.from({ length: pageCount }).map((_, pi) => (
-        <Page
-          key={pi}
-          pageNum={startPage + pi}
-          totalPages={totalPages}
-          project={project}
-          logoUrl={logoUrl}
-        >
-          <div style={{ height: CONTENT_H, overflow: 'hidden', position: 'relative' }}>
-            <div style={{ transform: `translateY(${-pi * CONTENT_H}px)`, transformOrigin: 'top left' }}>
-              {children}
-            </div>
-          </div>
-        </Page>
-      ))}
-    </>
-  );
+  return blocks;
 }
 
 // ── Extract CSS from template source ─────────────────────────────────────────
@@ -901,7 +814,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
 
   // ── Page numbering ──────────────────────────────────────────────────────────
   // Fixed pages: 1=Cover, 2=DocControl, 3=TOC
-  // Variable-length sections paginate dynamically using PagedSection component
+  // Variable-length sections paginate dynamically using PaginatedBlocks component
   const FIXED = 3; // cover, doc-control, TOC
   const execStartPage     = FIXED + 1;   // always page 4
   const stratStartPage    = execStartPage     + (pageCounts['__exec']     || 1);
@@ -1153,89 +1066,103 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             <TocRow level="l1" title="Appendix C — Glossary" page={appendixCPage} onClick={() => scrollToPage(appendixCPage)} />
           </Page>
 
-          {/* ══ PAGES 4+ — EXECUTIVE SUMMARY (variable length) ══ */}
-          <PagedSection id="__exec" startPage={execStartPage} totalPages={totalPages} project={project} onPageCount={onPageCount}>
-            <SecHead num="1">Executive Summary</SecHead>
-
-            {/* Executive summary content — custom if provided, fallback to generated */}
-            {project.executiveSummary
-              ? renderMarkdown(project.executiveSummary)
-              : <p className="rpt-p">
+          {/* ══ PAGES 4+ — EXECUTIVE SUMMARY (block-paginated) ══ */}
+          {(() => {
+            const blocks: React.ReactNode[] = [];
+            blocks.push(<SecHead key="head" num="1">Executive Summary</SecHead>);
+            if (project.executiveSummary) {
+              renderMarkdownToNodes(project.executiveSummary).forEach((n, i) =>
+                blocks.push(<React.Fragment key={`exec-md-${i}`}>{n}</React.Fragment>));
+            } else {
+              blocks.push(
+                <p key="exec-default" className="rpt-p">
                   {`A total of ${totalFindings} ${totalFindings === 1 ? 'vulnerability was' : 'vulnerabilities were'} identified during the ${project.engagement} assessment of ${project.name}.` +
                   (critHigh > 0 ? ` ${critHigh} critical or high-severity ${critHigh === 1 ? 'finding requires' : 'findings require'} immediate remediation.` : ' No critical or high-severity findings were identified.')}
                 </p>
+              );
             }
+            blocks.push(<SubHead key="sub-1.1" num="1.1">Findings at a Glance</SubHead>);
+            blocks.push(<p key="glance-p" className="rpt-p">All issues identified during the engagement are summarized in <b>Table 1</b>.</p>);
+            blocks.push(
+              <table key="glance-table" className="rpt-rsum">
+                <thead>
+                  <tr>
+                    <th className="c">Critical</th>
+                    <th className="h">High</th>
+                    <th className="m">Medium</th>
+                    <th className="l">Low</th>
+                    <th className="i">Informational</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style={{ color: counts.critical ? 'var(--crit)' : undefined }}>{counts.critical || 0}</td>
+                    <td style={{ color: counts.high ? 'var(--high)' : undefined }}>{counts.high || 0}</td>
+                    <td style={{ color: counts.medium ? 'var(--med)' : undefined }}>{counts.medium || 0}</td>
+                    <td>{counts.low || 0}</td>
+                    <td style={{ color: counts.info ? 'var(--info)' : undefined }}>{counts.info || 0}</td>
+                  </tr>
+                </tbody>
+              </table>
+            );
+            blocks.push(<div key="glance-cap" className="rpt-caption"><b>Table 1.</b> Total findings by severity.</div>);
+            blocks.push(<SubHead key="sub-1.2" num="1.2">Project Scope</SubHead>);
+            blocks.push(<p key="scope-p" className="rpt-p">The following assets were in scope for this engagement:</p>);
+            if (scopeRows.length > 0) {
+              blocks.push(
+                <ul key="scope-list" className="rpt-ul">
+                  {scopeRows.map((r, i) => (
+                    <li key={i}>
+                      <span className="rpt-code">{r.asset}</span>
+                      {r.type && <span style={{ color: 'var(--ink60)', marginLeft: 8 }}>{r.type}</span>}
+                      {r.notes && <span style={{ color: 'var(--ink60)', marginLeft: 4 }}>— {r.notes}</span>}
+                    </li>
+                  ))}
+                </ul>
+              );
+            } else {
+              blocks.push(<p key="scope-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No scope defined.</p>);
+            }
+            blocks.push(<SubHead key="sub-1.3" num="1.3">Key Security Strengths</SubHead>);
+            blocks.push(
+              <p key="strengths-p" className="rpt-p">
+                {totalFindings === 0
+                  ? 'No significant vulnerabilities were identified. The assessed environment demonstrated strong security posture.'
+                  : counts.critical === 0 && counts.high === 0
+                  ? 'No critical or high-severity findings were identified. The assessed controls are generally effective.'
+                  : 'The environment demonstrated baseline security controls. Standard authentication mechanisms and input validation were observed on primary endpoints.'}
+              </p>
+            );
+            blocks.push(<SubHead key="sub-1.4" num="1.4">Key Areas for Improvement</SubHead>);
+            if (sorted.slice(0, 3).length > 0) {
+              blocks.push(
+                <ul key="areas-list" className="rpt-ul">
+                  {sorted.slice(0, 3).map(f => (
+                    <li key={f.id}>
+                      <b><span style={{ color: SEV_COLOR[f.severity], marginRight: 4 }}>[{f.severity.toUpperCase()}]</span>{f.title}</b>
+                      {f.remediation ? ` — ${f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n')[0].slice(0, 100)}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              );
+            } else {
+              blocks.push(<p key="areas-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No specific areas identified.</p>);
+            }
+            return <PaginatedBlocks id="__exec" blocks={blocks} startPage={execStartPage} totalPages={totalPages} project={project} onPageCount={onPageCount} />;
+          })()}
 
-            <SubHead num="1.1">Findings at a Glance</SubHead>
-            <p className="rpt-p">All issues identified during the engagement are summarized in <b>Table 1</b>.</p>
-            <table className="rpt-rsum">
-              <thead>
-                <tr>
-                  <th className="c">Critical</th>
-                  <th className="h">High</th>
-                  <th className="m">Medium</th>
-                  <th className="l">Low</th>
-                  <th className="i">Informational</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ color: counts.critical ? 'var(--crit)' : undefined }}>{counts.critical || 0}</td>
-                  <td style={{ color: counts.high ? 'var(--high)' : undefined }}>{counts.high || 0}</td>
-                  <td style={{ color: counts.medium ? 'var(--med)' : undefined }}>{counts.medium || 0}</td>
-                  <td>{counts.low || 0}</td>
-                  <td style={{ color: counts.info ? 'var(--info)' : undefined }}>{counts.info || 0}</td>
-                </tr>
-              </tbody>
-            </table>
-            <div className="rpt-caption"><b>Table 1.</b> Total findings by severity.</div>
-
-            <SubHead num="1.2">Project Scope</SubHead>
-            <p className="rpt-p">The following assets were in scope for this engagement:</p>
-            {scopeRows.length > 0 ? (
-              <ul className="rpt-ul">
-                {scopeRows.map((r, i) => (
-                  <li key={i}>
-                    <span className="rpt-code">{r.asset}</span>
-                    {r.type && <span style={{ color: 'var(--ink60)', marginLeft: 8 }}>{r.type}</span>}
-                    {r.notes && <span style={{ color: 'var(--ink60)', marginLeft: 4 }}>— {r.notes}</span>}
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="rpt-p" style={{ color: 'var(--ink60)' }}>No scope defined.</p>}
-
-            <SubHead num="1.3">Key Security Strengths</SubHead>
-            <p className="rpt-p">
-              {totalFindings === 0
-                ? 'No significant vulnerabilities were identified. The assessed environment demonstrated strong security posture.'
-                : counts.critical === 0 && counts.high === 0
-                ? 'No critical or high-severity findings were identified. The assessed controls are generally effective.'
-                : 'The environment demonstrated baseline security controls. Standard authentication mechanisms and input validation were observed on primary endpoints.'}
-            </p>
-
-            <SubHead num="1.4">Key Areas for Improvement</SubHead>
-            {sorted.slice(0, 3).length > 0 ? (
-              <ul className="rpt-ul">
-                {sorted.slice(0, 3).map(f => (
-                  <li key={f.id}>
-                    <b><span style={{ color: SEV_COLOR[f.severity], marginRight: 4 }}>[{f.severity.toUpperCase()}]</span>{f.title}</b>
-                    {f.remediation ? ` — ${f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n')[0].slice(0, 100)}` : ''}
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="rpt-p" style={{ color: 'var(--ink60)' }}>No specific areas identified.</p>}
-          </PagedSection>
-
-          {/* ══ STRATEGIC RECOMMENDATIONS (variable length) ══ */}
-          <PagedSection id="__strat" startPage={stratStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount}>
-            <SecHead num="2">Strategic Recommendations</SecHead>
-
-            <SubHead num="2.1">Immediate Actions (0–30 Days)</SubHead>
-            {sorted.filter(f => f.severity === 'critical' || f.severity === 'high').length > 0 ? (
-              <>
-                <p className="rpt-p">The following critical and high-severity findings require immediate attention:</p>
-                <ul className="rpt-ul">
-                  {sorted.filter(f => f.severity === 'critical' || f.severity === 'high').map(f => (
+          {/* ══ STRATEGIC RECOMMENDATIONS (block-paginated) ══ */}
+          {(() => {
+            const blocks: React.ReactNode[] = [];
+            const critHighList = sorted.filter(f => f.severity === 'critical' || f.severity === 'high');
+            const medList = sorted.filter(f => f.severity === 'medium');
+            blocks.push(<SecHead key="head" num="2">Strategic Recommendations</SecHead>);
+            blocks.push(<SubHead key="sub-2.1" num="2.1">Immediate Actions (0–30 Days)</SubHead>);
+            if (critHighList.length > 0) {
+              blocks.push(<p key="ch-p" className="rpt-p">The following critical and high-severity findings require immediate attention:</p>);
+              blocks.push(
+                <ul key="ch-list" className="rpt-ul">
+                  {critHighList.map(f => (
                     <li key={f.id}>
                       <Badge sev={f.severity} />{' '}
                       <b>{f.code}</b> — {f.title}
@@ -1243,158 +1170,171 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                     </li>
                   ))}
                 </ul>
-              </>
-            ) : (
-              <p className="rpt-p" style={{ color: 'var(--ink60)' }}>No critical or high-severity findings requiring immediate remediation.</p>
-            )}
-
-            <SubHead num="2.2">Short-Term Improvements (30–90 Days)</SubHead>
-            {sorted.filter(f => f.severity === 'medium').length > 0 ? (
-              <>
-                <p className="rpt-p">Address medium-severity findings to reduce overall attack surface:</p>
-                <ul className="rpt-ul">
-                  {sorted.filter(f => f.severity === 'medium').map(f => (
+              );
+            } else {
+              blocks.push(<p key="ch-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No critical or high-severity findings requiring immediate remediation.</p>);
+            }
+            blocks.push(<SubHead key="sub-2.2" num="2.2">Short-Term Improvements (30–90 Days)</SubHead>);
+            if (medList.length > 0) {
+              blocks.push(<p key="med-p" className="rpt-p">Address medium-severity findings to reduce overall attack surface:</p>);
+              blocks.push(
+                <ul key="med-list" className="rpt-ul">
+                  {medList.map(f => (
                     <li key={f.id}>
                       <Badge sev={f.severity} />{' '}
                       <b>{f.code}</b> — {f.title}
                     </li>
                   ))}
                 </ul>
-              </>
-            ) : (
-              <p className="rpt-p" style={{ color: 'var(--ink60)' }}>No medium-severity findings in this assessment period.</p>
-            )}
+              );
+            } else {
+              blocks.push(<p key="med-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No medium-severity findings in this assessment period.</p>);
+            }
+            blocks.push(<SubHead key="sub-2.3" num="2.3">Long-Term Security Hardening</SubHead>);
+            blocks.push(<p key="lt-p" className="rpt-p">The following strategic initiatives are recommended to strengthen the overall security programme:</p>);
+            blocks.push(
+              <ul key="lt-list" className="rpt-ul">
+                <li>Implement a continuous vulnerability management programme with quarterly assessments.</li>
+                <li>Establish a formal secure development lifecycle (SDLC) with security gates at design, code review, and deployment stages.</li>
+                <li>Deploy a security information and event management (SIEM) solution for real-time threat detection.</li>
+                <li>Conduct annual penetration tests against all internet-facing assets and internal network segments.</li>
+                {sorted.filter(f => f.severity === 'low' || f.severity === 'info').slice(0, 2).map(f => (
+                  <li key={f.id}><b>{f.code}</b>: {f.title}</li>
+                ))}
+              </ul>
+            );
+            return <PaginatedBlocks id="__strat" blocks={blocks} startPage={stratStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount} />;
+          })()}
 
-            <SubHead num="2.3">Long-Term Security Hardening</SubHead>
-            <p className="rpt-p">
-              The following strategic initiatives are recommended to strengthen the overall security programme:
-            </p>
-            <ul className="rpt-ul">
-              <li>Implement a continuous vulnerability management programme with quarterly assessments.</li>
-              <li>Establish a formal secure development lifecycle (SDLC) with security gates at design, code review, and deployment stages.</li>
-              <li>Deploy a security information and event management (SIEM) solution for real-time threat detection.</li>
-              <li>Conduct annual penetration tests against all internet-facing assets and internal network segments.</li>
-              {sorted.filter(f => f.severity === 'low' || f.severity === 'info').slice(0, 2).map(f => (
-                <li key={f.id}><b>{f.code}</b>: {f.title}</li>
-              ))}
-            </ul>
-          </PagedSection>
+          {/* ══ TECHNICAL DETAILS (block-paginated) ══ */}
+          {(() => {
+            const blocks: React.ReactNode[] = [];
+            blocks.push(<SecHead key="head" num="3">Technical Details</SecHead>);
+            blocks.push(<SubHead key="sub-3.1" num="3.1">Technical Scope</SubHead>);
+            blocks.push(<p key="ts-p" className="rpt-p">The following assets were evaluated during this engagement:</p>);
+            blocks.push(
+              <table key="ts-table" className="rpt-table">
+                <thead><tr><th>Asset / URL</th><th style={{ width: '20%' }}>Type</th><th style={{ width: '30%' }}>Notes</th></tr></thead>
+                <tbody>
+                  {scopeRows.length > 0 ? scopeRows.map((r, i) => (
+                    <tr key={i}>
+                      <td><span className="rpt-code">{r.asset}</span></td>
+                      <td>{r.type || '—'}</td>
+                      <td style={{ color: 'var(--ink60)' }}>{r.notes || '—'}</td>
+                    </tr>
+                  )) : <tr><td colSpan={3} style={{ color: 'var(--ink60)' }}>No scope assets defined.</td></tr>}
+                </tbody>
+              </table>
+            );
+            blocks.push(<SubHead key="sub-3.2" num="3.2">Testing Methodology</SubHead>);
+            if (project.methodology) {
+              renderMarkdownToNodes(project.methodology).forEach((n, i) =>
+                blocks.push(<React.Fragment key={`meth-${i}`}>{n}</React.Fragment>));
+            } else {
+              blocks.push(
+                <p key="meth-default" className="rpt-p">
+                  The engagement followed the <em>PTES</em> execution phases mapped to <em>OWASP WSTG v4.2</em> controls,
+                  combining authenticated and unauthenticated test runs across the full assessment window.
+                </p>
+              );
+            }
+            blocks.push(
+              <table key="phases-table" className="rpt-table">
+                <thead><tr><th style={{ width: '8%' }}>#</th><th style={{ width: '28%' }}>Activity</th><th>Primary Tooling</th></tr></thead>
+                <tbody>
+                  {[
+                    ['01', 'Reconnaissance',       'OSINT, DNS enumeration, asset discovery, Shodan'],
+                    ['02', 'Threat Modelling',     'STRIDE analysis against service map'],
+                    ['03', 'Vulnerability Analysis','Burp Suite Pro, Semgrep, Nuclei, manual testing'],
+                    ['04', 'Exploitation',          'Controlled PoC — scoped to confirm impact only'],
+                    ['05', 'Post-Exploitation',     'Read-only confirmation within agreed rules of engagement'],
+                    ['06', 'Reporting',             'CVSS 3.1 scoring, CWE/OWASP mapping'],
+                  ].map(([n, a, t]) => (
+                    <tr key={n}>
+                      <td className="rpt-code">{n}</td>
+                      <td>{a}</td>
+                      <td style={{ color: 'var(--ink60)' }}>{t}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+            blocks.push(<SubHead key="sub-3.3" num="3.3">Engagement Timeline</SubHead>);
+            blocks.push(
+              <table key="timeline-table" className="rpt-table">
+                <thead><tr><th style={{ width: '35%' }}>Milestone</th><th>Date / Period</th></tr></thead>
+                <tbody>
+                  {[
+                    ['Assessment Start',     project.startDate],
+                    ['Assessment End',       project.endDate],
+                    ['Report Issued',        todayStr],
+                    ['Retest Window',        '90 days from report issue'],
+                  ].map(([m, d]) => (
+                    <tr key={m}><td>{m}</td><td><span className="rpt-code">{d}</span></td></tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+            blocks.push(
+              <div key="roe-callout" className="rpt-callout">
+                <b>Rules of Engagement —</b> No destructive testing, no customer PII handling, and no testing
+                of out-of-scope third-party processors. Testing was conducted during agreed windows only.
+              </div>
+            );
+            if (project.attackNarrative) {
+              blocks.push(<SubHead key="sub-3.4" num="3.4">Attack Narrative</SubHead>);
+              renderMarkdownToNodes(project.attackNarrative).forEach((n, i) =>
+                blocks.push(<React.Fragment key={`narr-${i}`}>{n}</React.Fragment>));
+            }
+            return <PaginatedBlocks id="__tech" blocks={blocks} startPage={techStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount} />;
+          })()}
 
-          {/* ══ TECHNICAL DETAILS (variable length) ══ */}
-          <PagedSection id="__tech" startPage={techStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount}>
-            <SecHead num="3">Technical Details</SecHead>
-
-            <SubHead num="3.1">Technical Scope</SubHead>
-            <p className="rpt-p">The following assets were evaluated during this engagement:</p>
-            <table className="rpt-table">
-              <thead><tr><th>Asset / URL</th><th style={{ width: '20%' }}>Type</th><th style={{ width: '30%' }}>Notes</th></tr></thead>
-              <tbody>
-                {scopeRows.length > 0 ? scopeRows.map((r, i) => (
-                  <tr key={i}>
-                    <td><span className="rpt-code">{r.asset}</span></td>
-                    <td>{r.type || '—'}</td>
-                    <td style={{ color: 'var(--ink60)' }}>{r.notes || '—'}</td>
-                  </tr>
-                )) : <tr><td colSpan={3} style={{ color: 'var(--ink60)' }}>No scope assets defined.</td></tr>}
-              </tbody>
-            </table>
-
-            <SubHead num="3.2">Testing Methodology</SubHead>
-            {project.methodology ? (
-              renderMarkdown(project.methodology)
-            ) : (
-              <p className="rpt-p">
-                The engagement followed the <em>PTES</em> execution phases mapped to <em>OWASP WSTG v4.2</em> controls,
-                combining authenticated and unauthenticated test runs across the full assessment window.
+          {/* ══ DETAILED FINDINGS OVERVIEW (block-paginated) ══ */}
+          {(() => {
+            const blocks: React.ReactNode[] = [];
+            blocks.push(<SecHead key="head" num="4">Detailed Findings</SecHead>);
+            blocks.push(
+              <p key="intro-p" className="rpt-p">
+                {totalFindings > 0
+                  ? `All ${totalFindings} identified ${totalFindings === 1 ? 'finding is' : 'findings are'} enumerated below, ordered by severity. Full technical details follow on subsequent pages.`
+                  : 'No findings were identified during this engagement.'}
               </p>
-            )}
-            <table className="rpt-table">
-              <thead><tr><th style={{ width: '8%' }}>#</th><th style={{ width: '28%' }}>Activity</th><th>Primary Tooling</th></tr></thead>
-              <tbody>
-                {[
-                  ['01', 'Reconnaissance',       'OSINT, DNS enumeration, asset discovery, Shodan'],
-                  ['02', 'Threat Modelling',     'STRIDE analysis against service map'],
-                  ['03', 'Vulnerability Analysis','Burp Suite Pro, Semgrep, Nuclei, manual testing'],
-                  ['04', 'Exploitation',          'Controlled PoC — scoped to confirm impact only'],
-                  ['05', 'Post-Exploitation',     'Read-only confirmation within agreed rules of engagement'],
-                  ['06', 'Reporting',             'CVSS 3.1 scoring, CWE/OWASP mapping'],
-                ].map(([n, a, t]) => (
-                  <tr key={n}>
-                    <td className="rpt-code">{n}</td>
-                    <td>{a}</td>
-                    <td style={{ color: 'var(--ink60)' }}>{t}</td>
+            );
+            blocks.push(
+              <table key="ov-table" className="rpt-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '12%' }}>ID</th>
+                    <th style={{ width: '17%' }}>Severity</th>
+                    <th>Title</th>
+                    <th style={{ width: '18%' }}>Component</th>
+                    <th style={{ width: '8%' }}>CVSS</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <SubHead num="3.3">Engagement Timeline</SubHead>
-            <table className="rpt-table">
-              <thead><tr><th style={{ width: '35%' }}>Milestone</th><th>Date / Period</th></tr></thead>
-              <tbody>
-                {[
-                  ['Assessment Start',     project.startDate],
-                  ['Assessment End',       project.endDate],
-                  ['Report Issued',        todayStr],
-                  ['Retest Window',        '90 days from report issue'],
-                ].map(([m, d]) => (
-                  <tr key={m}><td>{m}</td><td><span className="rpt-code">{d}</span></td></tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="rpt-callout">
-              <b>Rules of Engagement —</b> No destructive testing, no customer PII handling, and no testing
-              of out-of-scope third-party processors. Testing was conducted during agreed windows only.
-            </div>
-
-            {project.attackNarrative && (
-              <>
-                <SubHead num="3.4">Attack Narrative</SubHead>
-                {renderMarkdown(project.attackNarrative)}
-              </>
-            )}
-          </PagedSection>
-
-          {/* ══ DETAILED FINDINGS OVERVIEW (variable length) ══ */}
-          <PagedSection id="__overview" startPage={overviewStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount}>
-            <SecHead num="4">Detailed Findings</SecHead>
-            <p className="rpt-p">
-              {totalFindings > 0
-                ? `All ${totalFindings} identified ${totalFindings === 1 ? 'finding is' : 'findings are'} enumerated below, ordered by severity. Full technical details follow on subsequent pages.`
-                : 'No findings were identified during this engagement.'}
-            </p>
-            <table className="rpt-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '12%' }}>ID</th>
-                  <th style={{ width: '17%' }}>Severity</th>
-                  <th>Title</th>
-                  <th style={{ width: '18%' }}>Component</th>
-                  <th style={{ width: '8%' }}>CVSS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map(f => (
-                  <tr key={f.id}>
-                    <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{f.code}</td>
-                    <td><Badge sev={f.severity} /></td>
-                    <td>{f.title}</td>
-                    <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt', color: 'var(--ink60)' }}>{f.component || '—'}</td>
-                    <td style={{ fontWeight: 700, color: SEV_COLOR[f.severity] }}>{f.cvss > 0 ? f.cvss : '—'}</td>
-                  </tr>
-                ))}
-                {sorted.length === 0 && (
-                  <tr><td colSpan={5} style={{ color: 'var(--ink60)', padding: '20px 7pt' }}>No findings recorded.</td></tr>
-                )}
-              </tbody>
-            </table>
-            <div style={{ marginTop: 20 }}>
-              <p className="rpt-p" style={{ fontSize: '9pt', color: 'var(--ink60)' }}>
+                </thead>
+                <tbody>
+                  {sorted.map(f => (
+                    <tr key={f.id}>
+                      <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{f.code}</td>
+                      <td><Badge sev={f.severity} /></td>
+                      <td>{f.title}</td>
+                      <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt', color: 'var(--ink60)' }}>{f.component || '—'}</td>
+                      <td style={{ fontWeight: 700, color: SEV_COLOR[f.severity] }}>{f.cvss > 0 ? f.cvss : '—'}</td>
+                    </tr>
+                  ))}
+                  {sorted.length === 0 && (
+                    <tr><td colSpan={5} style={{ color: 'var(--ink60)', padding: '20px 7pt' }}>No findings recorded.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            );
+            blocks.push(
+              <p key="ov-foot" className="rpt-p" style={{ fontSize: '9pt', color: 'var(--ink60)', marginTop: 20 }}>
                 Refer to Appendix A for CVSS severity rating definitions. Each finding on the following pages
                 includes full technical details, reproduction steps, impact analysis, and remediation guidance.
               </p>
-            </div>
-          </PagedSection>
+            );
+            return <PaginatedBlocks id="__overview" blocks={blocks} startPage={overviewStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount} />;
+          })()}
 
           {/* ══ FINDING SECTION PAGES + INDIVIDUAL FINDINGS ══ */}
           {activeSevGroups.map(sev => {
@@ -1453,15 +1393,23 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                   </table>
                 </Page>
 
-                {/* Individual finding pages */}
+                {/* Individual finding pages — block-paginated */}
                 {groupFindings.map(f => (
-                  <FindingPageSet
+                  <PaginatedBlocks
                     key={f.id}
-                    f={f}
-                    project={project}
+                    id={f.id}
+                    blocks={buildFindingBlocks(f)}
                     startPage={findingStartPages[f.id]}
                     totalPages={totalPages}
+                    project={project}
                     onPageCount={onPageCount}
+                    continuationHeader={
+                      <div style={{ marginBottom: 10 }}>
+                        <div className="rpt-fid">Finding&nbsp;&nbsp;<b>{f.code}</b>&nbsp;&nbsp;<em style={{ fontWeight: 400, letterSpacing: 0 }}>continued</em></div>
+                        <div style={{ height: '.4pt', background: 'var(--rule)', margin: '6px 0 0' }} />
+                        <div style={{ height: '1.4pt', background: 'var(--rpt-accent)', marginTop: 1, marginBottom: 10 }} />
+                      </div>
+                    }
                   />
                 ))}
               </React.Fragment>

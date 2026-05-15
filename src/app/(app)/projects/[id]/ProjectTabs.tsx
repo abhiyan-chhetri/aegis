@@ -3,6 +3,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Ico } from '@/components/chrome/icons';
 import { Avatar } from '@/components/chrome/icons';
 import { Sev, StatusPill, SevCounts } from '@/components/ui/SevBadge';
@@ -88,7 +90,9 @@ type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
 
-// ── Inline-save text area ─────────────────────────────────────────────────────
+// ── Inline-save text area with markdown preview ──────────────────────────────
+// Full GFM markdown support (same renderer as the report preview): headings,
+// lists, tables, links, code blocks, bold/italic, blockquotes, images.
 function AutoSaveField({
   label, hint, value: initial, field, projectId, rows = 6, placeholder,
 }: {
@@ -97,6 +101,7 @@ function AutoSaveField({
 }) {
   const [value, setValue] = useState(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const save = useCallback(async (v: string) => {
@@ -124,25 +129,69 @@ function AutoSaveField({
 
   return (
     <div style={{ marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
         <label className="form-label" style={{ marginBottom: 0 }}>{label}</label>
-        <span style={{
-          fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
-          color: status === 'saved' ? 'var(--status-resolved)' : status === 'error' ? 'var(--sev-critical)' : status === 'saving' ? 'var(--ink-3)' : 'transparent',
-          transition: 'color 0.2s',
-        }}>
-          {status === 'saving' ? 'saving…' : status === 'saved' ? '✓ saved' : status === 'error' ? 'error' : '·'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Edit / Preview toggle */}
+          <div style={{ display: 'inline-flex', borderRadius: 4, background: 'var(--bg-2)', padding: 2 }}>
+            <button
+              type="button"
+              onClick={() => setMode('edit')}
+              style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 3, border: 'none', cursor: 'pointer',
+                background: mode === 'edit' ? 'var(--paper, white)' : 'transparent',
+                color: mode === 'edit' ? 'var(--ink-1)' : 'var(--ink-3)',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+                boxShadow: mode === 'edit' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+              }}
+            >EDIT</button>
+            <button
+              type="button"
+              onClick={() => setMode('preview')}
+              style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 3, border: 'none', cursor: 'pointer',
+                background: mode === 'preview' ? 'var(--paper, white)' : 'transparent',
+                color: mode === 'preview' ? 'var(--ink-1)' : 'var(--ink-3)',
+                fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
+                boxShadow: mode === 'preview' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+              }}
+            >PREVIEW</button>
+          </div>
+          <span style={{
+            fontSize: 10, fontFamily: 'var(--font-mono)', letterSpacing: '0.06em',
+            color: status === 'saved' ? 'var(--status-resolved)' : status === 'error' ? 'var(--sev-critical)' : status === 'saving' ? 'var(--ink-3)' : 'transparent',
+            transition: 'color 0.2s', minWidth: 56, textAlign: 'right',
+          }}>
+            {status === 'saving' ? 'saving…' : status === 'saved' ? '✓ saved' : status === 'error' ? 'error' : '·'}
+          </span>
+        </div>
       </div>
       {hint && <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 6 }}>{hint}</div>}
-      <textarea
-        className="input"
-        value={value}
-        onChange={handleChange}
-        rows={rows}
-        placeholder={placeholder}
-        style={{ width: '100%', lineHeight: 1.65, resize: 'vertical', fontFamily: value.includes('```') ? 'var(--font-mono)' : undefined, fontSize: 13 }}
-      />
+      {mode === 'edit' ? (
+        <textarea
+          className="input"
+          value={value}
+          onChange={handleChange}
+          rows={rows}
+          placeholder={placeholder}
+          style={{ width: '100%', lineHeight: 1.65, resize: 'vertical', fontFamily: value.includes('```') ? 'var(--font-mono)' : undefined, fontSize: 13 }}
+        />
+      ) : (
+        <div
+          className="md-preview"
+          style={{
+            minHeight: rows * 22, padding: '10px 14px',
+            background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 4,
+            fontSize: 13, lineHeight: 1.65,
+          }}
+        >
+          {value.trim() ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
+          ) : (
+            <div style={{ color: 'var(--ink-3)', fontStyle: 'italic', fontSize: 12 }}>Nothing to preview — switch to Edit and type something.</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
