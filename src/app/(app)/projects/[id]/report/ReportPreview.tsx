@@ -114,8 +114,11 @@ const DEFAULT_CSS = `
 .rpt-fsec { margin-top:10pt; }
 .rpt-fsec-hd { font-size:11.5pt; font-weight:600; margin:0; font-family:var(--sans); }
 .rpt-fsec-rule { height:.4pt; background:var(--rule); margin:3pt 0 5pt; }
+/* Links */
+.rpt-link { color:var(--rpt-accent); text-decoration:underline; text-underline-offset:2px; }
+.rpt-link:visited { color:var(--rpt-accent); }
 /* Code block (dark terminal) */
-.rpt-pre { background:var(--codebg); color:var(--codefg); font-family:var(--mono); font-size:8.5pt; line-height:1.45; padding:10pt 12pt; border-radius:2px; margin:4pt 0 6pt; white-space:pre-wrap; word-break:break-word; }
+.rpt-pre { background:var(--codebg); color:var(--codefg); font-family:var(--mono); font-size:8.5pt; line-height:1.45; padding:10pt 12pt; border-radius:2px; margin:4pt 0 6pt; white-space:pre-wrap; word-break:break-word; break-inside:avoid; page-break-inside:avoid; }
 .rpt-pre .k { color:var(--codekey); font-weight:600; }
 .rpt-pre .s { color:var(--codestr); }
 .rpt-pre .c { color:var(--codecom); font-style:italic; }
@@ -135,13 +138,13 @@ const DEFAULT_CSS = `
 .rpt-md-h2 { font-size:11.5pt; font-weight:600; color:var(--ink); margin:10pt 0 2pt; border-bottom:.5pt solid var(--rule); padding-bottom:2pt; }
 .rpt-md-h3 { font-size:10.5pt; font-weight:600; color:var(--ink80); margin:8pt 0 2pt; }
 /* Evidence / screenshot */
-.rpt-figure { margin:10pt 0 6pt; }
+.rpt-figure { margin:10pt 0 6pt; break-inside:avoid; page-break-inside:avoid; }
 .rpt-figure img { max-width:100%; border:1pt solid var(--rule); border-radius:2px; display:block; }
 .rpt-figure-caption { font-size:8pt; color:var(--ink60); font-style:italic; margin-top:4pt; }
 /* Ribbon / callout */
-.rpt-callout { margin:10pt 0 0; padding:7pt 11pt; border-left:3px solid var(--rpt-accent); background:#F4EFE0; font-size:9.5pt; color:var(--ink80); line-height:1.6; }
+.rpt-callout { margin:10pt 0 0; padding:7pt 11pt; border-left:3px solid var(--rpt-accent); background:#F4EFE0; font-size:9.5pt; color:var(--ink80); line-height:1.6; break-inside:avoid; page-break-inside:avoid; }
 /* Severity intro banner on section page */
-.rpt-sev-banner { border-radius:3px; padding:14pt 16pt; margin-bottom:14pt; }
+.rpt-sev-banner { border-radius:3px; padding:14pt 16pt; margin-bottom:14pt; break-inside:avoid; page-break-inside:avoid; }
 .rpt-sev-banner.critical { background:rgba(122,31,43,.08); border-left:4px solid var(--crit); }
 .rpt-sev-banner.high     { background:rgba(192,57,43,.08); border-left:4px solid var(--high); }
 .rpt-sev-banner.medium   { background:rgba(217,140,43,.08); border-left:4px solid var(--med); }
@@ -190,7 +193,7 @@ type Project = {
   lead: { name: string; initials: string; role: string };
 };
 type TeamMember = { id: string; name: string; initials: string; role: string };
-type Report = { id: string; version: string; status: string; templateName: string } | null;
+type Report = { id: string; version: string; status: string; templateName: string; reviewerId?: string | null } | null;
 type Props = {
   project: Project; findings: Finding[];
   counts: Record<string, number>; riskScore: number;
@@ -198,6 +201,7 @@ type Props = {
   teamMembers?: TeamMember[];
   reportId?: string;
   allUsers?: { id: string; name: string }[];
+  currentUserId?: string;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -205,17 +209,26 @@ function badgeCls(sev: string) {
   return sev === 'info' ? 'informational' : sev;
 }
 
-// Render inline markdown: **bold**, *italic*, `code`, _italic_, ![alt](src)
+// Render inline markdown: **bold**, *italic*, `code`, _italic_, [text](url), ![alt](src), raw URLs
+// Pattern order matters — images/links/URLs are matched before underscore-italic to
+// prevent underscores inside URLs from being treated as markdown.
 function renderInline(text: string, resolveImage?: (src: string) => string | null, key?: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`|!\[[^\]]*\]\([^)]+\))/g);
+  const INLINE_RE = /(!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<>"')\]]+|\*\*[^*\n]+\*\*|\*[^*\n]+\*|_[^_\n]+_|`[^`\n]+`)/g;
+  const parts = text.split(INLINE_RE);
   return (
     <React.Fragment key={key}>
       {parts.map((p, i) => {
-        if (p.startsWith('**') && p.endsWith('**'))
+        // Bold
+        if (p.startsWith('**') && p.endsWith('**') && p.length > 4)
           return <strong key={i}>{p.slice(2, -2)}</strong>;
-        if ((p.startsWith('*') && p.endsWith('*')) || (p.startsWith('_') && p.endsWith('_')))
+        // Italic (star)
+        if (p.startsWith('*') && p.endsWith('*') && p.length > 2 && !p.startsWith('**'))
           return <em key={i}>{p.slice(1, -1)}</em>;
-        if (p.startsWith('`') && p.endsWith('`'))
+        // Italic (underscore)
+        if (p.startsWith('_') && p.endsWith('_') && p.length > 2)
+          return <em key={i}>{p.slice(1, -1)}</em>;
+        // Inline code
+        if (p.startsWith('`') && p.endsWith('`') && p.length > 2)
           return <code key={i} className="rpt-icode">{p.slice(1, -1)}</code>;
         // Inline image: ![alt](src)
         const imgM = p.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
@@ -236,6 +249,23 @@ function renderInline(text: string, resolveImage?: (src: string) => string | nul
           }
           // Unresolved reference — render as placeholder
           return <em key={i} style={{ color: 'var(--ink60)', fontSize: '9pt' }}>[figure: {alt || rawSrc}]</em>;
+        }
+        // Markdown link: [text](url)
+        const linkM = p.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        if (linkM) {
+          return (
+            <a key={i} href={linkM[2]} className="rpt-link" target="_blank" rel="noopener noreferrer">
+              {linkM[1]}
+            </a>
+          );
+        }
+        // Raw URL
+        if (/^https?:\/\//.test(p)) {
+          return (
+            <a key={i} href={p} className="rpt-link" target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>
+              {p}
+            </a>
+          );
         }
         return p;
       })}
@@ -708,6 +738,56 @@ function FindingPageSet({
   );
 }
 
+// ── Generic paginator for long text sections (exec summary, methodology, etc) ─
+function PagedSection({
+  id, startPage, totalPages, project, children, logoUrl = '', onPageCount,
+}: {
+  id: string; startPage: number; totalPages: number; project: Project;
+  children: React.ReactNode; logoUrl?: string;
+  onPageCount: (id: string, n: number) => void;
+}) {
+  const [pageCount, setPageCount] = useState(1);
+  const measureRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    const h = el.scrollHeight;
+    const n = Math.max(1, Math.ceil(h / CONTENT_H));
+    setPageCount(n);
+    onPageCount(id, n);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  return (
+    <>
+      {/* Hidden measurement div — same width as page content */}
+      <div
+        className="rpt-page"
+        style={{ position: 'fixed', left: -9999, top: -9999, width: CONTENT_W, visibility: 'hidden', pointerEvents: 'none', overflow: 'visible' }}
+      >
+        <div ref={measureRef}>{children}</div>
+      </div>
+      {/* One visible page per measured slice */}
+      {Array.from({ length: pageCount }).map((_, pi) => (
+        <Page
+          key={pi}
+          pageNum={startPage + pi}
+          totalPages={totalPages}
+          project={project}
+          logoUrl={logoUrl}
+        >
+          <div style={{ height: CONTENT_H, overflow: 'hidden', position: 'relative' }}>
+            <div style={{ transform: `translateY(${-pi * CONTENT_H}px)`, transformOrigin: 'top left' }}>
+              {children}
+            </div>
+          </div>
+        </Page>
+      ))}
+    </>
+  );
+}
+
 // ── Extract CSS from template source ─────────────────────────────────────────
 function extractCSS(source: string): string {
   const t = source.trim();
@@ -718,7 +798,7 @@ function extractCSS(source: string): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ReportPreview({ project, findings, counts, riskScore, latestReport, templateCSS, teamMembers = [], reportId, allUsers = [] }: Props) {
+export function ReportPreview({ project, findings, counts, riskScore, latestReport, templateCSS, teamMembers = [], reportId, allUsers = [], currentUserId }: Props) {
   const [generating, setGenerating] = useState(false);
   const [generated,  setGenerated]  = useState(false);
   const [exporting,  setExporting]  = useState(false);
@@ -735,10 +815,19 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
   // Review workflow state
   const [reportStatus, setReportStatus] = useState<string>(latestReport?.status || 'draft');
   const [selectedReviewerId, setSelectedReviewerId] = useState('');
-  const [reviewerName, setReviewerName] = useState('');
+  const [reviewerName, setReviewerName] = useState(() => {
+    // Pre-populate reviewer name if report is already in-review
+    if (latestReport?.status === 'in-review' && latestReport?.reviewerId) {
+      return allUsers.find(u => u.id === latestReport.reviewerId)?.name || '';
+    }
+    return '';
+  });
   const [rejectComment, setRejectComment] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState('');
+
+  // Whether the current user is the assigned reviewer
+  const isAssignedReviewer = !!(currentUserId && latestReport?.reviewerId && currentUserId === latestReport.reviewerId);
 
   async function submitReview(action: 'submit' | 'approve' | 'reject') {
     if (!reportId) return;
@@ -780,7 +869,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
     setTodayStr(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }));
   }, []);
   const [pageCounts, setPageCounts] = useState<Record<string, number>>(
-    () => Object.fromEntries(findings.map(f => [f.id, 1]))
+    () => ({ __exec: 1, __strat: 1, __tech: 1, __overview: 1, ...Object.fromEntries(findings.map(f => [f.id, 1])) })
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -811,9 +900,14 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
   const activeSevGroups = SEV_ORDER.filter(s => (counts[s] || 0) > 0);
 
   // ── Page numbering ──────────────────────────────────────────────────────────
-  // Fixed pages: 1=Cover, 2=DocControl, 3=TOC, 4=ExecSummary, 5=StratRecs, 6=TechDetails, 7=FindingsOverview
-  const FIXED = 7;
-  let pageCounter = FIXED + 1;
+  // Fixed pages: 1=Cover, 2=DocControl, 3=TOC
+  // Variable-length sections paginate dynamically using PagedSection component
+  const FIXED = 3; // cover, doc-control, TOC
+  const execStartPage     = FIXED + 1;   // always page 4
+  const stratStartPage    = execStartPage     + (pageCounts['__exec']     || 1);
+  const techStartPage     = stratStartPage    + (pageCounts['__strat']    || 1);
+  const overviewStartPage = techStartPage     + (pageCounts['__tech']     || 1);
+  let pageCounter         = overviewStartPage + (pageCounts['__overview'] || 1);
 
   const sevSectionPages: Record<string, number> = {};
   const findingStartPages: Record<string, number> = {};
@@ -1019,26 +1113,26 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             <TocRow level="l2" num="0.2" title="Confidentiality Notice" page={2} onClick={() => scrollToPage(2)} />
 
             {/* Executive Summary */}
-            <TocRow level="l1" num="1" title="Executive Summary" page={4} onClick={() => scrollToPage(4)} />
-            <TocRow level="l2" num="1.1" title="Findings at a Glance" page={4} onClick={() => scrollToPage(4)} />
-            <TocRow level="l2" num="1.2" title="Project Scope" page={4} onClick={() => scrollToPage(4)} />
-            <TocRow level="l2" num="1.3" title="Key Security Strengths" page={4} onClick={() => scrollToPage(4)} />
-            <TocRow level="l2" num="1.4" title="Key Areas for Improvement" page={4} onClick={() => scrollToPage(4)} />
+            <TocRow level="l1" num="1" title="Executive Summary" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
+            <TocRow level="l2" num="1.1" title="Findings at a Glance" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
+            <TocRow level="l2" num="1.2" title="Project Scope" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
+            <TocRow level="l2" num="1.3" title="Key Security Strengths" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
+            <TocRow level="l2" num="1.4" title="Key Areas for Improvement" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
 
             {/* Strategic Recommendations */}
-            <TocRow level="l1" num="2" title="Strategic Recommendations" page={5} onClick={() => scrollToPage(5)} />
-            <TocRow level="l2" num="2.1" title="Immediate Actions (0–30 Days)" page={5} onClick={() => scrollToPage(5)} />
-            <TocRow level="l2" num="2.2" title="Short-Term Improvements (30–90 Days)" page={5} onClick={() => scrollToPage(5)} />
-            <TocRow level="l2" num="2.3" title="Long-Term Security Hardening" page={5} onClick={() => scrollToPage(5)} />
+            <TocRow level="l1" num="2" title="Strategic Recommendations" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
+            <TocRow level="l2" num="2.1" title="Immediate Actions (0–30 Days)" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
+            <TocRow level="l2" num="2.2" title="Short-Term Improvements (30–90 Days)" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
+            <TocRow level="l2" num="2.3" title="Long-Term Security Hardening" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
 
             {/* Technical Details */}
-            <TocRow level="l1" num="3" title="Technical Details" page={6} onClick={() => scrollToPage(6)} />
-            <TocRow level="l2" num="3.1" title="Technical Scope" page={6} onClick={() => scrollToPage(6)} />
-            <TocRow level="l2" num="3.2" title="Testing Details" page={6} onClick={() => scrollToPage(6)} />
-            <TocRow level="l2" num="3.3" title="Engagement Timeline" page={6} onClick={() => scrollToPage(6)} />
+            <TocRow level="l1" num="3" title="Technical Details" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
+            <TocRow level="l2" num="3.1" title="Technical Scope" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
+            <TocRow level="l2" num="3.2" title="Testing Details" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
+            <TocRow level="l2" num="3.3" title="Engagement Timeline" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
 
             {/* Detailed Findings */}
-            <TocRow level="l1" num="4" title="Detailed Findings" page={7} onClick={() => scrollToPage(7)} />
+            <TocRow level="l1" num="4" title="Detailed Findings" page={overviewStartPage} onClick={() => scrollToPage(overviewStartPage)} />
             {activeSevGroups.map(sev => {
               const subNum = sevSubNums[sev];
               const secPage = sevSectionPages[sev];
@@ -1059,8 +1153,8 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             <TocRow level="l1" title="Appendix C — Glossary" page={appendixCPage} onClick={() => scrollToPage(appendixCPage)} />
           </Page>
 
-          {/* ══ PAGE 4 — EXECUTIVE SUMMARY ══ */}
-          <Page id="page-4" pageNum={4} totalPages={totalPages} project={project}>
+          {/* ══ PAGES 4+ — EXECUTIVE SUMMARY (variable length) ══ */}
+          <PagedSection id="__exec" startPage={execStartPage} totalPages={totalPages} project={project} onPageCount={onPageCount}>
             <SecHead num="1">Executive Summary</SecHead>
 
             {/* Executive summary content — custom if provided, fallback to generated */}
@@ -1130,10 +1224,10 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                 ))}
               </ul>
             ) : <p className="rpt-p" style={{ color: 'var(--ink60)' }}>No specific areas identified.</p>}
-          </Page>
+          </PagedSection>
 
-          {/* ══ PAGE 5 — STRATEGIC RECOMMENDATIONS ══ */}
-          <Page id="page-5" pageNum={5} totalPages={totalPages} project={project} logoUrl={logoUrl}>
+          {/* ══ STRATEGIC RECOMMENDATIONS (variable length) ══ */}
+          <PagedSection id="__strat" startPage={stratStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount}>
             <SecHead num="2">Strategic Recommendations</SecHead>
 
             <SubHead num="2.1">Immediate Actions (0–30 Days)</SubHead>
@@ -1184,10 +1278,10 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                 <li key={f.id}><b>{f.code}</b>: {f.title}</li>
               ))}
             </ul>
-          </Page>
+          </PagedSection>
 
-          {/* ══ PAGE 6 — TECHNICAL DETAILS ══ */}
-          <Page id="page-6" pageNum={6} totalPages={totalPages} project={project} logoUrl={logoUrl}>
+          {/* ══ TECHNICAL DETAILS (variable length) ══ */}
+          <PagedSection id="__tech" startPage={techStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount}>
             <SecHead num="3">Technical Details</SecHead>
 
             <SubHead num="3.1">Technical Scope</SubHead>
@@ -1259,10 +1353,10 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                 {renderMarkdown(project.attackNarrative)}
               </>
             )}
-          </Page>
+          </PagedSection>
 
-          {/* ══ PAGE 7 — DETAILED FINDINGS OVERVIEW ══ */}
-          <Page id="page-7" pageNum={7} totalPages={totalPages} project={project} logoUrl={logoUrl}>
+          {/* ══ DETAILED FINDINGS OVERVIEW (variable length) ══ */}
+          <PagedSection id="__overview" startPage={overviewStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount}>
             <SecHead num="4">Detailed Findings</SecHead>
             <p className="rpt-p">
               {totalFindings > 0
@@ -1300,9 +1394,9 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                 includes full technical details, reproduction steps, impact analysis, and remediation guidance.
               </p>
             </div>
-          </Page>
+          </PagedSection>
 
-          {/* ══ PAGES 8+ — SEVERITY SECTIONS + FINDINGS ══ */}
+          {/* ══ FINDING SECTION PAGES + INDIVIDUAL FINDINGS ══ */}
           {activeSevGroups.map(sev => {
             const groupFindings = sorted.filter(f => f.severity === sev);
             const secPage       = sevSectionPages[sev];
@@ -1696,8 +1790,8 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                 </div>
               )}
 
-              {/* In-review: approve or reject */}
-              {reportStatus === 'in-review' && (
+              {/* In-review: approve or reject — only shown to the assigned reviewer */}
+              {reportStatus === 'in-review' && isAssignedReviewer && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <button
                     className="btn btn-sm"

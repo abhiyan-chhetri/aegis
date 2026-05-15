@@ -4,6 +4,7 @@ import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
+import { getSession } from '@/lib/auth';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Ico } from '@/components/chrome/icons';
 import { ReportPreview } from './ReportPreview';
@@ -13,6 +14,7 @@ type Props = { params: Promise<{ id: string }> };
 export default async function ReportPage({params }: Props) {
   await connection();
   const { id } = await params;
+  const session = await getSession();
 
   const [project, rawRows, allUsers] = await Promise.all([
     db.project.findUnique({
@@ -20,7 +22,7 @@ export default async function ReportPage({params }: Props) {
       include: {
         findings: { include: { assignee: true, evidence: { orderBy: { createdAt: 'asc' } } } },
         lead: true,
-        reports: { orderBy: { createdAt: 'desc' }, take: 1 },
+        reports: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, version: true, status: true, templateName: true, reviewerId: true } },
       },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
@@ -97,6 +99,7 @@ export default async function ReportPage({params }: Props) {
         teamMembers={teamMembers}
         reportId={project.reports[0]?.id}
         allUsers={allUsers.map(u => ({ id: u.id, name: u.name }))}
+        currentUserId={session?.id}
       />
     </div>
   );

@@ -492,6 +492,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       await tasks[0]();  // summary → description  (may be overwritten below)
 
       // Apply instantly (no typing delay for non-text fields)
+      if (r.title) setTitle(r.title);
       if (r.cwe) setCwe(r.cwe);
       if (r.owasp) setOwasp(r.owasp);
       if (r.severity) { setSeverity(r.severity); setSeverityLocked(true); }
