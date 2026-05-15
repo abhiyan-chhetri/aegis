@@ -543,8 +543,13 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
   const [aiExecSummary, setAiExecSummary] = useState<string | null>(null);
   const [aiAttackNarr, setAiAttackNarr] = useState<string | null>(null);
 
-  const generateSummaryWithAI = useCallback(async () => {
+  type SummarySection = 'executiveSummary' | 'methodology' | 'attackNarrative';
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
+
+  const generateSummaryWithAI = useCallback(async (sections?: SummarySection[]) => {
     if (aiPhase !== 'idle') return;
+    const want = (s: SummarySection) =>
+      !sections || sections.length === 0 || sections.includes(s);
     setAiError('');
     setAiPhase('thinking');
     try {
@@ -559,9 +564,18 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
         riskScore,
         startDate: project.startDate,
         endDate: project.endDate,
+        // Pass the existing values for sections we DON'T want to regenerate so
+        // the model has them as context but won't overwrite them client-side.
+        existing: {
+          executiveSummary: project.executiveSummary || '',
+          methodology: project.methodology || '',
+          attackNarrative: project.attackNarrative || '',
+        },
+        // Tell the backend which sections we actually want refreshed
+        sections: sections && sections.length > 0 ? sections : ['executiveSummary', 'methodology', 'attackNarrative'],
       };
 
-      await new Promise(r => setTimeout(r, 600)); // brief phase pause
+      await new Promise(r => setTimeout(r, 400));
       setAiPhase('writing');
 
       const res = await fetch('/api/ai/generate', {
@@ -572,26 +586,37 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'AI generation failed');
 
-      const result = data.result as { executiveSummary: string; attackNarrative: string };
-      setAiExecSummary(result.executiveSummary);
-      setAiAttackNarr(result.attackNarrative);
+      const result = data.result as { executiveSummary: string; methodology: string; attackNarrative: string };
+
+      // Apply only sections the user asked for
+      const patch: Record<string, string> = {};
+      if (want('executiveSummary') && result.executiveSummary) {
+        setAiExecSummary(result.executiveSummary);
+        patch.executiveSummary = result.executiveSummary;
+      }
+      if (want('methodology') && result.methodology) {
+        patch.methodology = result.methodology;
+      }
+      if (want('attackNarrative') && result.attackNarrative) {
+        setAiAttackNarr(result.attackNarrative);
+        patch.attackNarrative = result.attackNarrative;
+      }
 
       setAiPhase('done');
-      await new Promise(r => setTimeout(r, 700));
+      await new Promise(r => setTimeout(r, 500));
 
-      // Remount AutoSaveFields with new values, then save to DB
-      setExecSummaryKey(k => k + 1);
-      setAttackNarrKey(k => k + 1);
+      // Remount fields that were regenerated so they pick up the new initialValue
+      if (patch.executiveSummary) setExecSummaryKey(k => k + 1);
+      if (patch.attackNarrative)  setAttackNarrKey(k => k + 1);
 
-      // Persist to project
-      await fetch(`/api/projects/${project.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          executiveSummary: result.executiveSummary,
-          attackNarrative: result.attackNarrative,
-        }),
-      });
+      // Persist
+      if (Object.keys(patch).length > 0) {
+        await fetch(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+      }
     } catch (e) {
       setAiError(e instanceof Error ? e.message : 'AI generation failed');
     } finally {
@@ -912,8 +937,8 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
 
         {/* ── REPORT CONTENT TAB ── */}
         {activeTab === 'Report Content' && (
-          <div style={{ maxWidth: 820, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {/* Header row: info banner + AI button */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            {/* Header row: info banner + AI split-button */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, padding: '10px 14px', background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-sm)', borderLeft: '3px solid var(--accent)' }}>
                 <Ico name="info" size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
@@ -921,15 +946,79 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                   All fields below appear in the generated PDF report. Changes are auto-saved as you type. Markdown is supported.
                 </span>
               </div>
-              <button
-                className="btn btn-sm"
-                onClick={generateSummaryWithAI}
-                disabled={aiPhase !== 'idle'}
-                style={{ whiteSpace: 'nowrap', flexShrink: 0, gap: 6 }}
-              >
-                <span style={{ fontSize: 13 }}>✨</span>
-                {aiPhase !== 'idle' ? 'Generating…' : 'Generate with AI'}
-              </button>
+              {/* AI split-button: main click = whole report, chevron = pick section */}
+              <div style={{ position: 'relative', display: 'flex', flexShrink: 0 }}>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => generateSummaryWithAI()}
+                  disabled={aiPhase !== 'idle'}
+                  title="Regenerate the entire narrative (Executive Summary, Methodology, Attack Narrative)"
+                  style={{ whiteSpace: 'nowrap', gap: 6, borderRadius: 'var(--r-xs) 0 0 var(--r-xs)' }}
+                >
+                  <span style={{ fontSize: 13 }}>✨</span>
+                  {aiPhase !== 'idle' ? 'Generating…' : 'Generate with AI'}
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setAiMenuOpen(v => !v)}
+                  disabled={aiPhase !== 'idle'}
+                  title="Generate only one section"
+                  style={{ padding: '0 8px', borderRadius: '0 var(--r-xs) var(--r-xs) 0', borderLeft: 'none', display: 'flex', alignItems: 'center' }}
+                >
+                  <Ico name="chevDown" size={12} />
+                </button>
+                {aiMenuOpen && (
+                  <>
+                    <div onClick={() => setAiMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 10 }} />
+                    <div style={{
+                      position: 'absolute', top: '100%', right: 0, marginTop: 6,
+                      background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+                      borderRadius: 'var(--r-sm)', boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                      minWidth: 240, zIndex: 20, padding: 6,
+                    }}>
+                      <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)', padding: '6px 10px', letterSpacing: '0.06em' }}>
+                        GENERATE SELECTED SECTION
+                      </div>
+                      {([
+                        ['executiveSummary' as SummarySection, 'Executive Summary'],
+                        ['methodology'      as SummarySection, 'Methodology'],
+                        ['attackNarrative'  as SummarySection, 'Attack Narrative'],
+                      ] as const).map(([key, label]) => (
+                        <button
+                          key={key}
+                          onClick={() => { setAiMenuOpen(false); generateSummaryWithAI([key]); }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            width: '100%', padding: '7px 10px', fontSize: 12,
+                            background: 'transparent', border: 'none', borderRadius: 'var(--r-xs)',
+                            cursor: 'pointer', color: 'var(--ink-1)', textAlign: 'left',
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        >
+                          <span style={{ fontSize: 13 }}>✨</span>
+                          {label}
+                        </button>
+                      ))}
+                      <div style={{ height: 1, background: 'var(--line-1)', margin: '4px 0' }} />
+                      <button
+                        onClick={() => { setAiMenuOpen(false); generateSummaryWithAI(); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          width: '100%', padding: '7px 10px', fontSize: 12,
+                          background: 'transparent', border: 'none', borderRadius: 'var(--r-xs)',
+                          cursor: 'pointer', color: 'var(--ink-1)', textAlign: 'left', fontWeight: 600,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <span style={{ fontSize: 13 }}>✨</span>
+                        All sections
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* AI error banner */}
@@ -939,13 +1028,25 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
               </div>
             )}
 
-            {/* Narrative Content — same live-collab editor as the Notes tab */}
-            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 16, overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)' }}>
-                <div className="eyebrow" style={{ marginBottom: 4 }}>Executive Summary</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>High-level overview for stakeholders. Written in plain language. Markdown · Live co-editing · Auto-saved.</div>
+            {/* Executive Summary — big editor box, same writing experience as Notes */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="eyebrow" style={{ marginBottom: 4 }}>Executive Summary</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>High-level overview for stakeholders. Markdown · Live co-editing · Auto-saved.</div>
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => generateSummaryWithAI(['executiveSummary'])}
+                  disabled={aiPhase !== 'idle'}
+                  style={{ fontSize: 11, gap: 4 }}
+                  title="Regenerate just this section"
+                >
+                  <span>✨</span>
+                  AI
+                </button>
               </div>
-              <div style={{ height: 420, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ height: 'calc(100vh - 280px)', minHeight: 520, display: 'flex', flexDirection: 'column' }}>
                 <ProjectNotesEditor
                   key={`exec-${execSummaryKey}`}
                   projectId={project.id}
@@ -958,12 +1059,25 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
               </div>
             </div>
 
-            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 16, overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)' }}>
-                <div className="eyebrow" style={{ marginBottom: 4 }}>Attack Narrative</div>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Walk-through of key attack chains discovered during the engagement. Markdown · Live co-editing · Auto-saved.</div>
+            {/* Attack Narrative — big editor box, same writing experience as Notes */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="eyebrow" style={{ marginBottom: 4 }}>Attack Narrative</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Walk-through of key attack chains discovered during the engagement. Markdown · Live co-editing · Auto-saved.</div>
+                </div>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => generateSummaryWithAI(['attackNarrative'])}
+                  disabled={aiPhase !== 'idle'}
+                  style={{ fontSize: 11, gap: 4 }}
+                  title="Regenerate just this section"
+                >
+                  <span>✨</span>
+                  AI
+                </button>
               </div>
-              <div style={{ height: 480, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ height: 'calc(100vh - 280px)', minHeight: 600, display: 'flex', flexDirection: 'column' }}>
                 <ProjectNotesEditor
                   key={`narr-${attackNarrKey}`}
                   projectId={project.id}
@@ -971,7 +1085,7 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                   label="Attack Narrative"
                   description="Markdown · Live co-editing · Auto-saved"
                   initialNotes={aiAttackNarr !== null && attackNarrKey > 0 ? aiAttackNarr : (project.attackNarrative || '')}
-                  placeholder={`# Attack Narrative\n\nDuring the engagement, the team identified an attack chain that led to full domain compromise:\n\n1. Initial access via SQL injection on /api/login\n2. Privilege escalation through…\n\n\`\`\`bash\n# Example command\ncurl -X POST https://target.com/api/login -d "user=admin' OR 1=1--"\n\`\`\``}
+                  placeholder={`# Attack Narrative\n\nDuring the engagement, the team identified an attack chain that led to full domain compromise:\n\n1. Initial access via SQL injection on /api/login\n2. Privilege escalation through…`}
                 />
               </div>
             </div>

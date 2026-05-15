@@ -55,6 +55,18 @@ export interface ExecutiveSummaryContext {
   riskScore: number;
   startDate?: string;
   endDate?: string;
+  /**
+   * Which sections to actually fill. When the caller only wants ONE section
+   * regenerated (e.g. just the executive summary), the others get the
+   * existing content echoed back so the model knows the surrounding context
+   * but does not try to invent fresh prose for them.
+   */
+  sections?: Array<'executiveSummary' | 'methodology' | 'attackNarrative'>;
+  existing?: {
+    executiveSummary?: string;
+    methodology?: string;
+    attackNarrative?: string;
+  };
 }
 
 export interface GeneratedSummary {
@@ -374,14 +386,23 @@ a client report. Your job is to summarise WHAT WAS ACTUALLY FOUND in this
 specific engagement — not write a generic security white-paper.
 
 ABSOLUTE RULES — these override every other instruction:
+
 1. DO NOT FABRICATE. Only describe findings, attack chains, and exploitation
    steps that are present in the provided finding data and engagement notes.
    - No invented vulnerabilities, no invented exploits, no invented payloads,
      no invented client systems, no invented kill-chain stages.
    - If only one finding exists, don't pretend there's an "attack chain"
      across multiple findings — describe what was actually observed.
+   - No invented client names, sectors, technology stacks, geographic info,
+     or compliance frameworks. Only mention them if they're in the notes.
 
-2. BREVITY. Keep every section short and skimmable.
+2. RESPECT THE PER-SECTION INSTRUCTIONS in the user message. The caller may
+   ask you to regenerate ONE section only — when that happens, the other
+   sections come with "DO NOT rewrite — echo back the existing value verbatim".
+   You MUST return the existing text unchanged in those fields. Do not even
+   "polish" or "improve" them. Same string in, same string out.
+
+3. BREVITY. Keep every section short and skimmable.
    - Executive Summary: 4–6 short paragraphs MAX. No filler.
    - Methodology: ONE short paragraph + a small list. Do NOT exhaustively list
      every phase / framework / tool unless directly relevant.
@@ -389,48 +410,64 @@ ABSOLUTE RULES — these override every other instruction:
      findings provided. If no real attack chain exists across findings, write
      a short narrative about the single highest-impact finding instead.
 
-3. STRICTLY follow the notes. The engagement notes are the ground truth for
+4. STRICTLY follow the notes. The engagement notes are the ground truth for
    client context, tested assets, business sector, and tester observations.
    Mirror their language and details — do not contradict or overlay generic
-   "best practice" boilerplate.
+   "best practice" boilerplate. If the notes are sparse, the output should
+   be correspondingly sparse — don't pad to feel "complete".
 
-4. NO horror-story impact. No fabricated financial / regulatory consequences.
-   Mention compliance (GDPR / PCI-DSS / HIPAA / ISO 27001) ONLY if the notes
-   or scope clearly indicate it's relevant.
+5. NO horror-story impact. No fabricated financial / regulatory consequences,
+   no made-up record counts, no "could lead to a multi-million dollar breach"
+   speculation. Mention compliance (GDPR / PCI-DSS / HIPAA / ISO 27001) ONLY
+   if the notes or scope clearly indicate it's relevant.
 
-5. NO marketing language. Avoid phrases like "in today's threat landscape",
-   "increasingly sophisticated attackers", "ever-evolving" etc. Write the way
-   a tired CREST consultant writes at the end of a long day — direct, factual,
-   short sentences.
+6. NO marketing language. Avoid phrases like "in today's threat landscape",
+   "increasingly sophisticated attackers", "ever-evolving threat", "robust
+   security posture" etc. Write the way a tired CREST consultant writes at
+   the end of a long day — direct, factual, short sentences, present tense.
 
-STRUCTURE:
+7. NO fabricated tool versions. Mention testing tools by category ("a web
+   proxy", "a vulnerability scanner") rather than fictitious versions, unless
+   the notes name a specific tool used.
+
+STRUCTURE FOR EACH SECTION:
 
 TITLE: Short factual title (e.g. "External Web Application Assessment — Q2 2026").
+Do NOT include the word "Critical" or risk language in the title unless the
+findings actually demonstrate it.
 
-EXECUTIVE SUMMARY:
+EXECUTIVE SUMMARY (for the section labelled "executiveSummary"):
 - 1 sentence bottom line: what was tested, what was found.
 - A small markdown table of severity counts.
-- A short bullet list of the most material findings (one line each).
+- A short bullet list of the most material findings (one line each — use
+  the actual finding titles from the data).
 - 1 short paragraph on overall risk posture.
-- 3 short bullets of recommended priorities.
+- 3 short bullets of recommended priorities. These must be derived from the
+  ACTUAL findings, not generic security best practices.
 
-METHODOLOGY:
+METHODOLOGY (for the section labelled "methodology"):
 - 1 paragraph describing the approach (black/grey/white box, scope coverage).
-- A short bullet list of phases.
+- A short bullet list of phases (recon → enum → exploit → reporting).
 - A 1-line note on the testing standard followed (PTES / OWASP WSTG / NIST 800-115).
+- Do NOT exhaustively list tooling. Mention 1–3 tool categories at most.
 
-ATTACK NARRATIVE:
-- Open with the single highest-impact issue found in this engagement.
-- If multiple findings combined into a real chain, describe THAT chain step by step.
-- If not, describe the most material finding's exploitation flow and impact.
-- Close with one short paragraph on root causes / defensive gaps observed.
+ATTACK NARRATIVE (for the section labelled "attackNarrative"):
+- Open with the single highest-impact issue found in this engagement,
+  by name (use the actual finding title).
+- If multiple findings combined into a real chain, describe THAT chain step
+  by step using the actual finding titles. If not, focus on the single
+  highest-impact finding's exploitation flow and impact — do not invent a
+  chain to pad length.
+- Close with one short paragraph on root causes / defensive gaps observed,
+  derived from the patterns visible across the actual findings.
 
-Return ONLY a valid JSON object — no preamble, no explanation:
+Return ONLY a valid JSON object — no preamble, no explanation, no markdown
+fences around the JSON:
 {
   "title": "Short factual report title",
-  "executiveSummary": "Concise markdown executive summary",
-  "methodology": "Concise markdown methodology",
-  "attackNarrative": "Concise markdown attack narrative grounded in the actual findings"
+  "executiveSummary": "Concise markdown executive summary (or echoed-back existing value if not in scope)",
+  "methodology": "Concise markdown methodology (or echoed-back existing value if not in scope)",
+  "attackNarrative": "Concise markdown attack narrative grounded in the actual findings (or echoed-back existing value if not in scope)"
 }`;
 
 function buildFindingUserMessage(ctx: FindingGenerationContext): string {
@@ -466,6 +503,30 @@ function buildSummaryUserMessage(ctx: ExecutiveSummaryContext): string {
     .map(f => `- [${f.severity.toUpperCase()}] ${f.title}`)
     .join('\n');
 
+  // Per-section regeneration: when the caller only wants a subset of sections,
+  // pin the other sections to their existing values so the model has full
+  // context but understands it should not rewrite them.
+  const sections = ctx.sections && ctx.sections.length > 0
+    ? ctx.sections
+    : ['executiveSummary', 'methodology', 'attackNarrative'] as const;
+  const ex = ctx.existing || {};
+  const sectionInstructions: string[] = [];
+  if (!sections.includes('executiveSummary')) {
+    sectionInstructions.push(`- DO NOT rewrite "executiveSummary". Echo back the existing value verbatim:\n<<<\n${ex.executiveSummary || ''}\n>>>`);
+  } else {
+    sectionInstructions.push('- Generate "executiveSummary" fresh from the findings + notes.');
+  }
+  if (!sections.includes('methodology')) {
+    sectionInstructions.push(`- DO NOT rewrite "methodology". Echo back the existing value verbatim:\n<<<\n${ex.methodology || ''}\n>>>`);
+  } else {
+    sectionInstructions.push('- Generate "methodology" fresh from the engagement context.');
+  }
+  if (!sections.includes('attackNarrative')) {
+    sectionInstructions.push(`- DO NOT rewrite "attackNarrative". Echo back the existing value verbatim:\n<<<\n${ex.attackNarrative || ''}\n>>>`);
+  } else {
+    sectionInstructions.push('- Generate "attackNarrative" fresh from the findings + notes.');
+  }
+
   return `Write the narrative sections of this penetration test report based STRICTLY
 on the findings and notes below. Do not invent additional findings, fabricate
 attack chains, or pad with generic security advice. Keep every section short.
@@ -489,6 +550,9 @@ ${critHighFindings || 'None'}
 ALL FINDINGS (full detail — this is the source of truth, do not contradict it):
 ${findingsList}
 ${ctx.notes ? `\nENGAGEMENT NOTES (tester context — use these verbatim where relevant, do NOT layer in facts that aren't here):\n${ctx.notes}` : ''}
+
+PER-SECTION INSTRUCTIONS:
+${sectionInstructions.join('\n')}
 
 Write concise narrative sections grounded in the data above. Match the tone of
 a tired CREST consultant: direct, factual, no marketing copy, no fictional
