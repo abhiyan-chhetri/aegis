@@ -152,17 +152,44 @@ export function EditProjectForm({ project, users }: Props) {
             const data = await rescoreRes.json() as {
               rescored: number;
               total: number;
-              skipped: { noVector: number; noChange: number };
+              skipped: { noVector: number; noChange: number; locked: number };
+              changes?: { findingId: string; code: string; from: number; to: number }[];
             };
             const n = Number(data.rescored ?? 0);
-            const skipped = data.skipped ?? { noVector: 0, noChange: 0 };
+            const skipped = data.skipped ?? { noVector: 0, noChange: 0, locked: 0 };
+            const changes = data.changes ?? [];
+
             if (n > 0) {
+              // Show a rich toast with an "Rewrite impact with AI" action that
+              // calls the per-finding impact rewriter for every rescored row.
               toast.success(`Re-scored ${n} of ${data.total} finding${data.total === 1 ? '' : 's'}`, {
                 description: `CVSS adjusted to match the new asset environment.${
-                  skipped.noVector > 0
-                    ? ` ${skipped.noVector} finding${skipped.noVector === 1 ? '' : 's'} had no CVSS vector and weren't touched.`
-                    : ''}`,
-                duration: 6000,
+                  skipped.locked > 0 ? ` (${skipped.locked} force-locked, skipped.)` : ''
+                }${
+                  skipped.noVector > 0 ? ` ${skipped.noVector} had no CVSS vector.` : ''
+                }`,
+                duration: 8000,
+                action: {
+                  label: '✨ Rewrite impact text',
+                  onClick: async () => {
+                    toast.info(`Rewriting impact for ${changes.length} finding${changes.length === 1 ? '' : 's'}…`, { duration: 3000 });
+                    let ok = 0, fail = 0;
+                    // Run sequentially to avoid overloading the AI provider
+                    for (const c of changes) {
+                      try {
+                        const r = await fetch(`/api/findings/${c.findingId}/rewrite-impact`, { method: 'POST' });
+                        if (r.ok) ok++; else fail++;
+                      } catch { fail++; }
+                    }
+                    if (ok > 0) {
+                      toast.success(`Impact rewritten for ${ok} finding${ok === 1 ? '' : 's'}`, {
+                        description: fail > 0 ? `${fail} failed — open them to retry.` : 'Refresh the project to see the new wording.',
+                      });
+                    } else {
+                      toast.error('Impact rewrite failed', { description: 'No findings updated. Check the AI provider settings.' });
+                    }
+                  },
+                },
               });
             } else if (skipped.noVector > 0 && skipped.noChange === 0) {
               toast.warn('No findings re-scored', {

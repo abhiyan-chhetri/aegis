@@ -27,6 +27,9 @@ export function ensureEnvColumns(): Promise<void> {
       await db.$executeRawUnsafe(
         `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "criticality" TEXT NOT NULL DEFAULT 'silver'`,
       );
+      await db.$executeRawUnsafe(
+        `ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "cvssLocked" BOOLEAN NOT NULL DEFAULT false`,
+      );
     } catch (err) {
       console.warn('[ensureEnvColumns] warning:', (err as Error).message);
       // Reset so the next call retries

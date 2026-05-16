@@ -71,6 +71,7 @@ export async function POST(
       cvss = 0,
       cvssVector = '',
       discovered,
+      cvssLocked = false,
     } = body;
 
     if (!title) {
@@ -79,11 +80,12 @@ export async function POST(
 
     // Apply project's CVSS environmental adjustment to the incoming vector so
     // the created finding's score / severity already match the asset's data
-    // classification + criticality.
+    // classification + criticality. Skip entirely if the user pinned the
+    // score via cvssLocked.
     let adjustedSeverity = severity;
     let adjustedCvss = typeof cvss === 'number' ? cvss : parseFloat(cvss) || 0;
     let adjustedVector = cvssVector;
-    if (typeof cvssVector === 'string' && cvssVector.includes(':')) {
+    if (!cvssLocked && typeof cvssVector === 'string' && cvssVector.includes(':')) {
       try {
         const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
         await ensureEnvColumns().catch(() => {});
@@ -142,6 +144,7 @@ export async function POST(
         assigneeId: assigneeId ?? session.id,
         cvss: adjustedCvss,
         cvssVector: adjustedVector,
+        cvssLocked: !!cvssLocked,
         discovered: discovered ?? new Date().toISOString().split('T')[0],
       },
       include: {

@@ -70,17 +70,29 @@ export async function POST(
   const criticality = projectRows[0].criticality as Criticality;
 
   // ── 2. Load every finding's CVSS vector ──────────────────────────────────
+  // cvssLocked is fetched via raw SQL so this works even before
+  // `prisma generate` has been re-run after the v2.1 schema patch.
   const findings = await db.finding.findMany({
     where: { projectId },
     select: { id: true, code: true, severity: true, cvss: true, cvssVector: true },
   });
+  const lockedRows = await db.$queryRawUnsafe<{ id: string; cvssLocked: boolean }[]>(
+    `SELECT id, COALESCE("cvssLocked", false) AS "cvssLocked" FROM "Finding" WHERE "projectId" = $1`,
+    projectId,
+  ).catch(() => [] as { id: string; cvssLocked: boolean }[]);
+  const lockedSet = new Set(lockedRows.filter(r => r.cvssLocked).map(r => r.id));
 
   let rescored = 0;
-  const skipped = { noVector: 0, noChange: 0 };
+  const skipped = { noVector: 0, noChange: 0, locked: 0 };
   const changes: { findingId: string; code: string; from: number; to: number; severity: string }[] = [];
 
   // ── 3. Recompute one at a time. Tiny project → no batching needed. ───────
   for (const f of findings) {
+    // Locked findings always skip env adjustment, regardless of the new env.
+    if (lockedSet.has(f.id)) {
+      skipped.locked++;
+      continue;
+    }
     const vec = parseVector(f.cvssVector);
     if (!vec) {
       // Empty / malformed cvssVector — usually a finding the tester hasn't

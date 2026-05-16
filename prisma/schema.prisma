@@ -90,6 +90,11 @@ model Finding {
   /// rendered report. Default 999999 puts unsorted findings last so the
   /// severity ordering wins until the user explicitly reorders.
   sortOrder    Int      @default(999999)
+  /// When true, the env-aware adjuster skips this finding entirely. The
+  /// stored cvss / cvssVector / severity values are honoured exactly as the
+  /// user set them. Useful for findings where the team explicitly does NOT
+  /// want the project-level data class / criticality to influence the score.
+  cvssLocked   Boolean  @default(false)
   discovered   String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

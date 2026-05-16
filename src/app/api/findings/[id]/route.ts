@@ -70,14 +70,17 @@ export async function PATCH(
       'title', 'severity', 'status', 'summary', 'description',
       'reproduction', 'impact', 'remediation', 'references',
       'cwe', 'owasp', 'component', 'assets', 'assetOwner', 'assigneeId', 'cvss', 'cvssVector',
-      'discovered', 'hasCVE',
+      'discovered', 'hasCVE', 'cvssLocked',
     ];
 
     // If the client sent a new cvssVector, automatically apply the project's
     // environmental adjustment so the saved score / severity already reflect
     // the asset's data classification + criticality. Means manual edits stay
     // in sync with the env without needing a separate rescore.
-    if (typeof body.cvssVector === 'string' && body.cvssVector.includes(':')) {
+    // EXCEPTION: respect cvssLocked — if the user has manually pinned this
+    // finding's score, never touch it from the server side.
+    const willLock = body.cvssLocked === true || (body.cvssLocked === undefined && (currentFinding as { cvssLocked?: boolean }).cvssLocked === true);
+    if (!willLock && typeof body.cvssVector === 'string' && body.cvssVector.includes(':')) {
       try {
         const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
         await ensureEnvColumns().catch(() => {});

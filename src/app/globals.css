@@ -493,3 +493,46 @@ pre {
 /* Severity-color outline animation on critical/high finding row hover */
 .row-crit-hover:hover { box-shadow: inset 3px 0 0 var(--sev-critical); }
 .row-high-hover:hover { box-shadow: inset 3px 0 0 var(--sev-high); }
+
+/* ═══ Extra polish animations ═══ */
+/* Subtle "save ripple" — emits from a saved element */
+@keyframes save-ripple {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-resolved) 60%, transparent); }
+  100% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--status-resolved) 0%, transparent); }
+}
+.anim-save-ripple { animation: save-ripple .6s ease-out; border-radius: 8px; }
+/* Score-changed glow — drop on the CVSS pill when the score moves */
+@keyframes score-glow {
+  0%   { filter: drop-shadow(0 0 0 currentColor); }
+  35%  { filter: drop-shadow(0 0 12px currentColor); }
+  100% { filter: drop-shadow(0 0 0 currentColor); }
+}
+.anim-score-glow { animation: score-glow .9s ease-out; }
+/* List item fade-and-slide on first paint — used via JS only on first mount */
+@keyframes list-enter {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.anim-list-enter { animation: list-enter .42s cubic-bezier(.2,1,.4,1) backwards; }
+/* Background sweep — for highlighting newly-changed rows briefly */
+@keyframes row-flash {
+  0%   { background-color: color-mix(in srgb, var(--accent) 18%, transparent); }
+  100% { background-color: transparent; }
+}
+.anim-row-flash { animation: row-flash 1.4s ease-out; }
+/* Modal pop-in — used by toasts and dialogs */
+@keyframes modal-pop {
+  0%   { opacity: 0; transform: scale(.96) translateY(8px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.anim-modal-pop { animation: modal-pop .22s cubic-bezier(.2,1.3,.4,1) backwards; }
+/* Gradient-shift accent — for hero banners / loading states */
+@keyframes gradient-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.anim-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 6s ease infinite;
+}

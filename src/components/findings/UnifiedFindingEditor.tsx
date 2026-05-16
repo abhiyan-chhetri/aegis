@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
 import { LivePresence } from '@/components/collab/LivePresence';
 import { toast } from '@/components/ui/Toast';
+import { PulseOnChange } from '@/components/anim/CvssRolldown';
 import { FindingComments } from './FindingComments';
 import { ScreenshotAnnotator } from './ScreenshotAnnotator';
 
@@ -335,6 +336,12 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   const [capVal,        setCapVal]        = useState('');
   const [dragOver,        setDragOver]        = useState(false);
   const [severityLocked,  setSeverityLocked]  = useState(false);
+  // Force-assign CVSS: when true, the server-side env adjuster skips this
+  // finding entirely. The user has decided the project-level data class /
+  // criticality should NOT influence this particular score.
+  const [cvssLocked, setCvssLocked] = useState<boolean>(
+    Boolean((finding as { cvssLocked?: boolean } | undefined)?.cvssLocked),
+  );
 
   const [aiPhase, setAiPhase] = useState<AIPhase>('idle');
   const [aiError, setAiError] = useState('');
@@ -688,6 +695,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             assets:affectedAssets.split('\n').map(a=>a.trim()).filter(Boolean),
             cvss:cvssScore,
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
+            cvssLocked,
           }),
         });
         if (!res.ok) { toast.error('Save failed', { description: `HTTP ${res.status}` }); return; }
@@ -702,6 +710,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             reproduction:reproduction.trim(),impact:impact.trim(),remediation:remediation.trim(),references:references.trim(),
             cvss:cvssScore,
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
+            cvssLocked,
           }),
         });
         if(!res.ok){
@@ -1132,16 +1141,46 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
           {/* CVSS */}
           <div style={{padding:'14px 18px'}}>
-            <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:12}}>
+            <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:6}}>
               <div className="eyebrow">CVSS 3.1</div>
-              <div style={{display:'flex',alignItems:'baseline',gap:5}}>
-                <span className="serif" style={{fontSize:26,fontWeight:700,color:cvssColor,lineHeight:1}}>{cvssScore.toFixed(1)}</span>
-                <span style={{fontSize:11,color:cvssColor,fontFamily:'var(--font-mono)'}}>{cvssLabel}</span>
-              </div>
+              <PulseOnChange value={cvssScore.toFixed(1)} color={cvssColor}>
+                <span style={{display:'inline-flex',alignItems:'baseline',gap:5}}>
+                  <span className="serif" style={{fontSize:26,fontWeight:700,color:cvssColor,lineHeight:1}}>{cvssScore.toFixed(1)}</span>
+                  <span style={{fontSize:11,color:cvssColor,fontFamily:'var(--font-mono)'}}>{cvssLabel}</span>
+                </span>
+              </PulseOnChange>
             </div>
 
+            {/* Force-assign CVSS toggle — bypasses env-aware adjustment */}
+            <label style={{
+              display:'flex',alignItems:'center',gap:8,
+              padding:'8px 10px',marginBottom:10,
+              background: cvssLocked ? 'color-mix(in srgb, var(--sev-high) 10%, transparent)' : 'var(--bg-2)',
+              border:`1px solid ${cvssLocked ? 'color-mix(in srgb, var(--sev-high) 30%, transparent)' : 'var(--line-1)'}`,
+              borderRadius:'var(--r-sm)',
+              cursor:'pointer',transition:'all .15s',
+            }}>
+              <input
+                type="checkbox"
+                checked={cvssLocked}
+                onChange={e => setCvssLocked(e.target.checked)}
+                style={{margin:0,cursor:'pointer'}}
+              />
+              <Ico name={cvssLocked ? 'alert' : 'check'} size={12} style={{color: cvssLocked ? 'var(--sev-high)' : 'var(--ink-3)'}}/>
+              <div style={{flex:1,fontSize:11,lineHeight:1.45}}>
+                <div style={{fontWeight:600,color: cvssLocked ? 'var(--sev-high)' : 'var(--ink-1)'}}>
+                  {cvssLocked ? 'Force-locked — env adjustment bypassed' : 'Force-assign CVSS (bypass env adjustment)'}
+                </div>
+                <div style={{color:'var(--ink-3)',fontSize:10.5,marginTop:1}}>
+                  {cvssLocked
+                    ? 'This score will be saved exactly as set, ignoring the project\'s data classification and criticality.'
+                    : 'Tick to pin this score and bypass the project-level CVSS rolldown / rollup.'}
+                </div>
+              </div>
+            </label>
+
             <div style={{height:3,borderRadius:100,background:'var(--bg-3)',marginBottom:12,overflow:'hidden'}}>
-              <div style={{height:'100%',width:`${(cvssScore/10)*100}%`,background:cvssColor,borderRadius:100,transition:'all .3s'}}/>
+              <div style={{height:'100%',width:`${(cvssScore/10)*100}%`,background:cvssColor,borderRadius:100,transition:'all .35s ease'}}/>
             </div>
 
             <div style={{display:'flex',flexDirection:'column',gap:8}}>

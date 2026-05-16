@@ -56,6 +56,8 @@ export async function register() {
       // v2.0 / data classification + asset criticality (drives CVSS environmental adj)
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "dataClassification" TEXT NOT NULL DEFAULT 'C3'`,
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "criticality"        TEXT NOT NULL DEFAULT 'silver'`,
+      // v2.1 / force-lock CVSS — skip env adjustment per-finding when set
+      `ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "cvssLocked" BOOLEAN NOT NULL DEFAULT false`,
     ];
 
     for (const sql of migrations) {
