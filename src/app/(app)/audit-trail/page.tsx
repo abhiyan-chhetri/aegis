@@ -64,16 +64,41 @@ export default async function AuditTrailPage({ searchParams }: Props) {
     return 'var(--ink-2)';
   };
 
+  // Render a single primitive value sensibly: resolve user-ids to names,
+  // collapse arrays / nested objects to compact human-readable strings instead
+  // of the JS default "[object Object]".
+  const formatValue = (v: unknown): string => {
+    if (v === null || v === undefined) return '—';
+    if (Array.isArray(v)) {
+      if (v.length === 0) return '∅';
+      // Special-case rescore_environmental changes: array of { code, from, to }
+      if (v.every(item => typeof item === 'object' && item !== null && 'code' in item && 'from' in item && 'to' in item)) {
+        const items = v as { code: string; from: number; to: number; severity?: string }[];
+        const preview = items.slice(0, 5).map(c => `${c.code}: ${c.from.toFixed(1)}→${c.to.toFixed(1)}`).join(', ');
+        return items.length > 5 ? `${preview} (+${items.length - 5} more)` : preview;
+      }
+      // Generic array
+      return v.map(formatValue).join(', ');
+    }
+    if (typeof v === 'object') {
+      // Generic object: render as "k:v · k:v"
+      return Object.entries(v as Record<string, unknown>)
+        .filter(([, val]) => val !== null && val !== '' && val !== undefined)
+        .map(([k, val]) => `${k}: ${formatValue(val)}`)
+        .join(' · ') || '{}';
+    }
+    const raw = String(v);
+    return ID_RE.test(raw) ? (userMap.get(raw) ?? raw) : raw;
+  };
+
   const formatChanges = (json: string): string => {
     try {
       const obj = JSON.parse(json);
       return Object.entries(obj)
-        .filter(([, v]) => v !== null && v !== '')
+        .filter(([, v]) => v !== null && v !== '' && !(Array.isArray(v) && v.length === 0))
         .map(([k, v]) => {
-          const raw = String(v);
-          const resolved = ID_RE.test(raw) ? (userMap.get(raw) ?? raw) : raw;
           const label = k.replace(/([A-Z])/g, ' $1').toLowerCase().trim();
-          return `${label}: ${resolved}`;
+          return `${label}: ${formatValue(v)}`;
         })
         .join(' · ');
     } catch { return '—'; }
