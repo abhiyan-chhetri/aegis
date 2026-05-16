@@ -878,31 +878,27 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
     } catch { return []; }
   })();
 
-  // Use the order the server sends us (sortOrder ASC, applied via
-  // sortFindingsBySortOrder in report/page.tsx). When the user drags a low
-  // severity finding above a critical one, that order wins in the report —
-  // pages 4.x simply iterate severity sections in sortOrder of their first
-  // member, so the drag intent is fully respected end to end.
-  const sorted = [...findings];
-  // Re-derive severity-section ordering from the persisted finding order so
-  // a section appears as soon as its first finding does.
-  const seenSev = new Set<string>();
-  const sevOrder: string[] = [];
-  for (const f of sorted) {
-    if (!seenSev.has(f.severity)) { seenSev.add(f.severity); sevOrder.push(f.severity); }
-  }
+  // Report ordering rule:
+  //   1. Severity FIRST — Critical, High, Medium, Low, Info (in that order)
+  //   2. Within each severity, use the persisted custom drag order
+  //      (server applied sortFindingsBySortOrder, so input is already in
+  //      sortOrder ASC for ties).
+  //   3. Finding code / createdAt acts as a tertiary tiebreaker via stable sort.
+  //
+  // Array.prototype.sort is stable in modern engines (ES2019+), so the input
+  // order — which already reflects the user's drag order — is preserved
+  // within each severity bucket.
+  const sorted = [...findings].sort((a, b) =>
+    SEV_ORDER.indexOf(a.severity as Sev) - SEV_ORDER.indexOf(b.severity as Sev)
+  );
 
   const totalFindings = Object.values(counts).reduce((a, b) => a + b, 0);
   const critHigh = (counts.critical || 0) + (counts.high || 0);
 
   // Active severity groups (non-empty, in order)
-  // Sections appear in the order their first finding appears in the user's
-  // drag order. So if you drag a Low above a Critical, the Low section comes
-  // first in the report. Severities not present in `sorted` (e.g. zero count)
-  // get filtered out automatically.
-  const activeSevGroups = (sevOrder.length > 0
-    ? sevOrder
-    : SEV_ORDER.filter(s => (counts[s] || 0) > 0)) as Sev[];
+  // Severity sections appear in the standard pentest-report order:
+  // Critical → High → Medium → Low → Info. Empty severity groups are skipped.
+  const activeSevGroups = SEV_ORDER.filter(s => (counts[s] || 0) > 0);
 
   // ── Page numbering ──────────────────────────────────────────────────────────
   // Fixed pages: 1=Cover, 2=DocControl, 3=TOC

@@ -655,6 +655,9 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
 
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // Save status for the drag-reorder feature so the user gets visible
+  // feedback when the order is persisted (or when persistence fails).
+  const [reorderSaveStatus, setReorderSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const reorderActive = sevFilter === 'all' && !search;
 
   function handleDragStart(e: React.DragEvent, id: string) {
@@ -682,12 +685,29 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
     next.splice(to, 0, moved);
     setOrderedFindings(next);
     setDragId(null);
-    // Persist
+
+    // Persist + surface success/failure clearly. The new server route is
+    // self-healing (it adds the sortOrder column if missing) and transactional.
+    setReorderSaveStatus('saving');
     fetch(`/api/projects/${project.id}/findings/reorder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderedIds: next.map(f => f.id) }),
-    }).catch(() => { /* silent — the local order still applies until next reload */ });
+    })
+      .then(async res => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          console.error('[reorder] failed:', res.status, body);
+          setReorderSaveStatus('error');
+          return;
+        }
+        setReorderSaveStatus('saved');
+        setTimeout(() => setReorderSaveStatus(prev => prev === 'saved' ? 'idle' : prev), 1800);
+      })
+      .catch(err => {
+        console.error('[reorder] network error:', err);
+        setReorderSaveStatus('error');
+      });
   }
   function handleDragEnd() { setDragId(null); setDragOverId(null); }
 
@@ -761,11 +781,23 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
               </div>
             </div>
 
-            {/* Drag hint — only shown when reorder is active */}
+            {/* Drag hint — only shown when reorder is active, includes save state */}
             {reorderActive && findings.length > 1 && (
               <div style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Ico name="grip" size={12} />
                 Drag rows by the handle to reorder findings — order persists across the report and team.
+                {reorderSaveStatus !== 'idle' && (
+                  <span style={{
+                    marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5,
+                    color: reorderSaveStatus === 'saved'  ? 'var(--status-resolved)'
+                         : reorderSaveStatus === 'saving' ? 'var(--ink-3)'
+                         : 'var(--sev-critical)',
+                  }}>
+                    {reorderSaveStatus === 'saving' ? 'saving order…'
+                      : reorderSaveStatus === 'saved'  ? '✓ order saved'
+                      : '✗ couldn\'t save — check console / restart server'}
+                  </span>
+                )}
               </div>
             )}
 

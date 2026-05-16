@@ -118,49 +118,45 @@ export default async function DashboardPage() {
   const openFindings = allFindings.filter((f: any) => f.status !== 'resolved' && f.status !== 'accepted');
   const criticalOpen = openFindings.filter((f: any) => f.severity === 'critical').length;
 
-  // Compute finding counts per week (last 12 weeks) from actual DB
-  const twelveWeeksAgo = new Date();
-  twelveWeeksAgo.setDate(twelveWeeksAgo.getDate() - 84); // 12 * 7
+  // ── Finding counts per week, last 12 weeks ────────────────────────────────
+  // We do the bucketing entirely in JS using millisecond math, instead of
+  // mixing SQL `date_trunc('week', ...)` with local-time `Date` ops. That
+  // earlier approach silently dropped findings when the user's local week
+  // boundary didn't line up with UTC's — which is why two recent findings
+  // could show as "no findings recorded".
+  const NOW = Date.now();
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-  const weeklyFindings = await db.$queryRawUnsafe<{ week_start: Date; severity: string; count: bigint }[]>(`
-    SELECT
-      date_trunc('week', "createdAt") AS week_start,
-      severity,
-      COUNT(*) AS count
-    FROM "Finding"
-    WHERE "createdAt" >= $1
-    GROUP BY week_start, severity
-    ORDER BY week_start ASC
-  `, twelveWeeksAgo);
+  // Anchor "Now" bucket at the end of today (local). Each bucket is the 7-day
+  // window ending at that boundary.
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+  const bucketEnd = (i: number) => todayEnd.getTime() - i * WEEK_MS;            // i=0 is "now"
+  const bucketStart = (i: number) => bucketEnd(i) - WEEK_MS + 1;                // exclusive prev boundary
 
-  // Build 12-week grid
-  const trendData: { critical: number; high: number; medium: number; low: number }[] = [];
-  for (let w = 11; w >= 0; w--) {
-    const weekStart = new Date();
-    weekStart.setDate(weekStart.getDate() - w * 7);
-    weekStart.setHours(0, 0, 0, 0);
-    // find monday of that week
-    const day = weekStart.getDay();
-    const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
-    weekStart.setDate(diff);
-    const weekKey = weekStart.toISOString().slice(0, 10);
+  const recentFindings = await db.finding.findMany({
+    where: { createdAt: { gte: new Date(NOW - 12 * WEEK_MS) } },
+    select: { severity: true, createdAt: true },
+  });
 
-    const weekRows = weeklyFindings.filter(r => {
-      const d = new Date(r.week_start);
-      d.setHours(0, 0, 0, 0);
-      const k = d.toISOString().slice(0, 10);
-      return k === weekKey;
-    });
+  // Build 12-week grid: index 0 = "12 weeks ago", index 11 = "Now"
+  const trendData: { critical: number; high: number; medium: number; low: number }[] =
+    Array.from({ length: 12 }, () => ({ critical: 0, high: 0, medium: 0, low: 0 }));
 
-    const point = { critical: 0, high: 0, medium: 0, low: 0 };
-    for (const r of weekRows) {
-      const n = Number(r.count);
-      if (r.severity === 'critical') point.critical = n;
-      else if (r.severity === 'high') point.high = n;
-      else if (r.severity === 'medium') point.medium = n;
-      else if (r.severity === 'low') point.low = n;
+  for (const f of recentFindings) {
+    const t = new Date(f.createdAt).getTime();
+    // Which bucket? bucket "i" (counting back from now) contains [start, end].
+    // i = 0 → most recent week. We want chart index 11-i.
+    for (let i = 0; i < 12; i++) {
+      if (t >= bucketStart(i) && t <= bucketEnd(i)) {
+        const point = trendData[11 - i];
+        if      (f.severity === 'critical') point.critical++;
+        else if (f.severity === 'high')     point.high++;
+        else if (f.severity === 'medium')   point.medium++;
+        else if (f.severity === 'low')      point.low++;
+        break;
+      }
     }
-    trendData.push(point);
   }
 
   // Team load: group by lead
