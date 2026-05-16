@@ -27,6 +27,7 @@ interface Cmd {
 
 const STATIC_CMDS: Cmd[] = [
   { id: 'nav-dashboard',  type: 'nav', label: 'Dashboard',              sub: 'Overview',              icon: 'dashboard', href: '/dashboard',   group: 'Navigate' },
+  { id: 'nav-inbox',      type: 'nav', label: 'Inbox',                  sub: 'Mentions, reviews, assigned findings', icon: 'message', href: '/inbox', group: 'Navigate' },
   { id: 'nav-portfolio',  type: 'nav', label: 'Portfolio',              sub: 'MBR + KPIs',            icon: 'chart',     href: '/portfolio',   group: 'Navigate' },
   { id: 'nav-projects',   type: 'nav', label: 'Projects',               sub: 'All engagements',       icon: 'projects',  href: '/projects',    group: 'Navigate' },
   { id: 'nav-library',    type: 'nav', label: 'Vulnerability Library',  sub: 'All findings, every project', icon: 'library', href: '/library', group: 'Navigate' },

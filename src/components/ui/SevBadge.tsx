@@ -1,15 +1,61 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { animate } from 'animejs';
 
 export const SEV_LABEL: Record<string, string> = {
   critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info',
 };
 
+const SEV_HEX: Record<string, string> = {
+  critical: 'var(--sev-critical)', high: 'var(--sev-high)',
+  medium: 'var(--sev-medium)', low: 'var(--sev-low)',
+  info: 'var(--sev-info, #9a968c)',
+};
+
+/**
+ * Severity pill with an animated ring on the leading dot. When the `level`
+ * prop changes between renders, the ring sweeps 360° via anime.js — a small
+ * visible signal that the severity just changed.
+ */
 export function Sev({ level, size = 'md' }: { level: string; size?: 'sm' | 'md' }) {
+  const ringRef = useRef<SVGSVGElement | null>(null);
+  const prevLevel = useRef<string>(level);
+
+  useEffect(() => {
+    if (prevLevel.current === level || !ringRef.current) {
+      prevLevel.current = level;
+      return;
+    }
+    prevLevel.current = level;
+    animate(ringRef.current, {
+      rotate: '+=360',
+      scale: [{ to: 1.35, duration: 220 }, { to: 1, duration: 260 }],
+      easing: 'easeOutCubic',
+      duration: 520,
+    });
+  }, [level]);
+
+  const ringSize = size === 'sm' ? 10 : 12;
+  const color = SEV_HEX[level] || SEV_HEX.info;
+
   return (
-    <span className={`pill pill-${level}`} style={size === 'sm' ? { height: 18, padding: '0 7px', fontSize: 10 } : {}}>
-      <span className={`dot dot-${level}`} style={{ width: 5, height: 5 }} />
+    <span className={`pill pill-${level}`} style={{
+      ...(size === 'sm' ? { height: 18, padding: '0 7px', fontSize: 10 } : {}),
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+    }}>
+      {/* Animated ring instead of a plain dot — spins 360° on severity change */}
+      <svg
+        ref={ringRef}
+        width={ringSize}
+        height={ringSize}
+        viewBox={`0 0 ${ringSize} ${ringSize}`}
+        style={{ display: 'inline-block', overflow: 'visible', transformOrigin: '50% 50%' }}
+        aria-hidden
+      >
+        <circle cx={ringSize / 2} cy={ringSize / 2} r={ringSize / 2 - 1.5} fill="none" stroke={color} strokeOpacity={0.35} strokeWidth={1} />
+        <circle cx={ringSize / 2} cy={ringSize / 2} r={ringSize / 2 - 3.5} fill={color} />
+      </svg>
       {SEV_LABEL[level] || level}
     </span>
   );

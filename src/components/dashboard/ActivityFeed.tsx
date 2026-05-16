@@ -1,5 +1,6 @@
 'use client';
 
+import React, { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { Ico } from '@/components/chrome/icons';
 
@@ -104,7 +105,143 @@ function formatFieldName(field: string): string {
   return map[field] || field;
 }
 
+// Known action types — used to populate the chip filter
+const ACTION_TYPES = [
+  { key: 'created',        label: 'Created' },
+  { key: 'updated',        label: 'Updated' },
+  { key: 'commented',      label: 'Commented' },
+  { key: 'status_changed', label: 'Status' },
+  { key: 'assigned',       label: 'Assigned' },
+];
+
+// Date-range chips. Empty key = no filter.
+const RANGE_PRESETS: { key: '' | '24h' | '7d' | '30d' | '90d'; label: string }[] = [
+  { key: '',    label: 'All time' },
+  { key: '24h', label: 'Last 24h' },
+  { key: '7d',  label: 'Last 7 days' },
+  { key: '30d', label: 'Last 30 days' },
+  { key: '90d', label: 'Last 90 days' },
+];
+
+function rangeStart(key: string): number {
+  if (!key) return 0;
+  const now = Date.now();
+  if (key === '24h') return now - 24 * 3600 * 1000;
+  if (key === '7d')  return now - 7  * 86400 * 1000;
+  if (key === '30d') return now - 30 * 86400 * 1000;
+  if (key === '90d') return now - 90 * 86400 * 1000;
+  return 0;
+}
+
 export function ActivityFeed({ activities }: { activities: Activity[] }) {
+  const [q, setQ] = useState('');
+  const [userFilter, setUserFilter] = useState<string>(''); // user id
+  const [actionFilter, setActionFilter] = useState<string>('');
+  const [range, setRange] = useState<string>('');
+
+  // Unique user list for the user-filter dropdown
+  const users = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; initials: string }>();
+    for (const a of activities) {
+      if (a.user && !seen.has(a.user.id)) seen.set(a.user.id, a.user);
+    }
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [activities]);
+
+  const filtered = useMemo(() => {
+    const since = rangeStart(range);
+    const qLower = q.trim().toLowerCase();
+    return activities.filter(a => {
+      if (userFilter && a.user?.id !== userFilter) return false;
+      if (actionFilter && a.action !== actionFilter) return false;
+      if (since && new Date(a.createdAt).getTime() < since) return false;
+      if (qLower) {
+        const hay = `${a.action} ${a.target} ${a.detail} ${a.user?.name ?? ''} ${a.project?.name ?? ''} ${a.project?.code ?? ''} ${a.finding?.code ?? ''}`.toLowerCase();
+        if (!qLower.split(/\s+/).every(t => hay.includes(t))) return false;
+      }
+      return true;
+    });
+  }, [activities, q, userFilter, actionFilter, range]);
+
+  const hasAnyFilter = !!q || !!userFilter || !!actionFilter || !!range;
+
+  // ── Filter bar ─────────────────────────────────────────────────────────────
+  const FilterBar = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+      {/* Search */}
+      <div style={{ position: 'relative' }}>
+        <Ico name="search" size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)' }} />
+        <input
+          className="input"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search activity (action, project, finding, user)…"
+          style={{ paddingLeft: 30, width: '100%', height: 32, fontSize: 12.5 }}
+        />
+        {hasAnyFilter && (
+          <button
+            onClick={() => { setQ(''); setUserFilter(''); setActionFilter(''); setRange(''); }}
+            title="Clear all filters"
+            style={{
+              position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--ink-3)', padding: 4, display: 'flex',
+            }}
+          >
+            <Ico name="x" size={13} />
+          </button>
+        )}
+      </div>
+
+      {/* Chip rows */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={chipLabelStyle}>Action</span>
+        <Chip active={!actionFilter} onClick={() => setActionFilter('')}>All</Chip>
+        {ACTION_TYPES.map(a => (
+          <Chip key={a.key} active={actionFilter === a.key} onClick={() => setActionFilter(actionFilter === a.key ? '' : a.key)}>
+            {a.label}
+          </Chip>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={chipLabelStyle}>When</span>
+        {RANGE_PRESETS.map(r => (
+          <Chip key={r.key} active={range === r.key} onClick={() => setRange(r.key)}>
+            {r.label}
+          </Chip>
+        ))}
+      </div>
+
+      {users.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={chipLabelStyle}>User</span>
+          <Chip active={!userFilter} onClick={() => setUserFilter('')}>Anyone</Chip>
+          {users.map(u => (
+            <Chip
+              key={u.id}
+              active={userFilter === u.id}
+              onClick={() => setUserFilter(userFilter === u.id ? '' : u.id)}
+            >
+              <span style={{
+                display: 'inline-block', width: 14, height: 14, borderRadius: '50%',
+                background: 'var(--bg-3)', color: 'var(--ink-2)',
+                fontSize: 8, lineHeight: '14px', textAlign: 'center', marginRight: 5,
+                fontFamily: 'var(--font-mono)',
+              }}>{u.initials}</span>
+              {u.name}
+            </Chip>
+          ))}
+        </div>
+      )}
+
+      {/* Result count */}
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
+        {filtered.length} of {activities.length} {hasAnyFilter ? 'matching' : 'total'} {filtered.length === 1 ? 'event' : 'events'}
+      </div>
+    </div>
+  );
+
   if (activities.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--ink-3)' }}>
@@ -115,8 +252,15 @@ export function ActivityFeed({ activities }: { activities: Activity[] }) {
   }
 
   return (
+    <>
+      {FilterBar}
+      {filtered.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '32px 20px', color: 'var(--ink-3)', fontSize: 12.5 }}>
+          No activity matches the current filters.
+        </div>
+      ) : (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-      {activities.map((activity) => {
+      {filtered.map((activity) => {
         const timeAgo = (() => {
           const date = new Date(activity.createdAt);
           const now = new Date();
@@ -300,5 +444,33 @@ export function ActivityFeed({ activities }: { activities: Activity[] }) {
         );
       })}
     </div>
+      )}
+    </>
   );
 }
+
+// ── Tiny chip used by the filter bar ────────────────────────────────────────
+function Chip({ active, onClick, children }: { active?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        height: 24, padding: '0 10px', borderRadius: 100,
+        border: '1px solid',
+        borderColor: active ? 'var(--accent)' : 'var(--line-1)',
+        background: active ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
+        color: active ? 'var(--accent)' : 'var(--ink-2)',
+        fontSize: 11, fontFamily: 'var(--font-mono)',
+        cursor: 'pointer', transition: 'all 0.12s',
+        whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+const chipLabelStyle: React.CSSProperties = {
+  fontSize: 10, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)',
+  letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 4,
+};

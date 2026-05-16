@@ -11,6 +11,11 @@ export const metadata: Metadata = {
   description: 'Internal penetration testing report management platform',
 };
 
+// No-flash theme — must run BEFORE React hydrates so a stored "light" theme
+// doesn't flash dark on reload. Inlined into <head> below.
+const NO_FLASH_THEME =
+  `(function(){try{var t=localStorage.getItem('aegis.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} style={{ height: '100%' }} suppressHydrationWarning>
@@ -21,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400&display=swap"
           rel="stylesheet"
         />
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} />
       </head>
       <body style={{ height: '100%', margin: 0 }}>
         <ThemeLoader />

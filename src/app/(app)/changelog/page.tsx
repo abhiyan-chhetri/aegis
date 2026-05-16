@@ -27,6 +27,22 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: '1.9.0',
+    date: '2026-05-15',
+    title: 'Inbox, Filterable Activity, Animated Counters & a Safer Redeploy Script',
+    summary: 'Everything that needs your attention is now one click away — a new workspace-wide Inbox surfaces every mention, review request, and assigned finding in one place. The dashboard activity feed gained search and chip filters (by user, action type, date range). KPIs count up on load and severity pills spin 360° when a finding\'s severity changes. And a new fixdb.sh lets you safely redeploy onto an existing install without dropping any data.',
+    highlight: true,
+    changes: [
+      { type: 'new', text: 'Workspace Inbox (G then I, or the sidebar Inbox link) — single page showing every @mention in comments, every report awaiting your review, and every open finding assigned to you across all projects. Filter by tab + free-text search; one click opens the source.' },
+      { type: 'new', text: 'Filterable activity feed — the dashboard activity feed gained a search box and chip filters (Action: Created / Updated / Commented / Status / Assigned · When: 24h / 7d / 30d / 90d / All-time · User: each team member). Filter chips deselect on second click; clear-all button appears once any filter is set.' },
+      { type: 'new', text: 'Number-tween animation on dashboard counters — the four big KPI tiles (Active engagements, Open findings, Critical unresolved, Reports generated) now count up from zero on load via the anime.js CountUp helper.' },
+      { type: 'new', text: 'Animated severity ring on finding cards — when a finding\'s severity changes from any value to another, the leading ring on the severity pill sweeps 360° and pulses briefly. Visible everywhere Sev is used (Findings tab, Library list, Inbox, etc.).' },
+      { type: 'new', text: 'fixdb.sh — safely re-deploy onto an existing install. Runs every idempotent ALTER / CREATE statement against the live database without dropping or recreating anything. Shows row counts before and after as confirmation that no data was touched. Works via local psql or by exec-ing into the aegis-db Docker container.' },
+      { type: 'improved', text: 'Inline no-flash theme script moved from /(app)/layout.tsx to the root /app/layout.tsx <head>. Resolves a Next.js dev warning ("script tags inside React components are never executed when rendering on the client") and ensures the stored theme is applied before first paint on every route, not just authenticated ones.' },
+      { type: 'improved', text: 'Command palette gained an "Inbox" navigation entry; G-chord shortcut G→I jumps there too.' },
+    ],
+  },
+  {
     version: '1.8.0',
     date: '2026-05-15',
     title: 'Command Palette, Light Theme, Resume Editing & Drag-to-Reorder Findings',

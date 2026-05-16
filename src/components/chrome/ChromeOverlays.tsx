@@ -35,6 +35,7 @@ interface Shortcut { keys: string; label: string; group: string; }
 const SHORTCUTS: Shortcut[] = [
   { group: 'Navigation', keys: '⌘ K / Ctrl K', label: 'Open command palette (search anywhere)' },
   { group: 'Navigation', keys: 'G then D',     label: 'Go to Dashboard' },
+  { group: 'Navigation', keys: 'G then I',     label: 'Go to Inbox' },
   { group: 'Navigation', keys: 'G then P',     label: 'Go to Projects' },
   { group: 'Navigation', keys: 'G then L',     label: 'Go to Vulnerability Library' },
   { group: 'Navigation', keys: 'G then R',     label: 'Go to Reports' },
@@ -108,6 +109,7 @@ export function ChromeOverlays() {
           c: '/changelog', C: '/changelog',
           t: '/team',      T: '/team',
           a: '/audit-trail', A: '/audit-trail',
+          i: '/inbox',     I: '/inbox',
         };
         const path = map[e.key];
         if (path) { e.preventDefault(); setChord(null); window.location.href = path; }

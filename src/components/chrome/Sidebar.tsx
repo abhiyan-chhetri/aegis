@@ -11,6 +11,7 @@ type SidebarProps = { user?: User | null };
 
 const NAV_ITEMS = [
   { href: '/dashboard',   icon: 'dashboard', label: 'Dashboard' },
+  { href: '/inbox',       icon: 'message',   label: 'Inbox' },
   { href: '/projects',    icon: 'projects',  label: 'Projects' },
   { href: '/library',     icon: 'library',   label: 'Vuln List' },
   { href: '/reports',     icon: 'reports',   label: 'Reports' },

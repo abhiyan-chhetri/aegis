@@ -7,6 +7,7 @@ import { getSession } from '@/lib/auth';
 import { MentionsList } from '@/components/dashboard/MentionsList';
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed';
 import { ResumeEditing } from '@/components/dashboard/ResumeEditing';
+import { CountUp } from '@/components/anim/animate';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Avatar, Ico } from '@/components/chrome/icons';
 import { SevCounts, StatusPill } from '@/components/ui/SevBadge';
@@ -584,9 +585,12 @@ function KpiCard({
       </div>
       <div className="eyebrow" style={{ marginBottom: 10 }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 0 }}>
-        <span className="serif" style={{ fontSize: 54, fontWeight: 400, color: 'var(--ink-0)', lineHeight: 1 }}>
-          {value}
-        </span>
+        <CountUp
+          to={value}
+          duration={950}
+          className="serif"
+          style={{ fontSize: 54, fontWeight: 400, color: 'var(--ink-0)', lineHeight: 1, display: 'inline-block', minWidth: 24 }}
+        />
         {valueSuffix}
       </div>
       {delta && (
