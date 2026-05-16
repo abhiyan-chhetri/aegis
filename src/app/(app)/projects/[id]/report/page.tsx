@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { sortFindingsBySortOrder } from '@/lib/sortFindings';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Ico } from '@/components/chrome/icons';
 import { ReportPreview } from './ReportPreview';
@@ -20,7 +21,7 @@ export default async function ReportPage({params }: Props) {
     db.project.findUnique({
       where: { id },
       include: {
-        findings: { include: { assignee: true, evidence: { orderBy: { createdAt: 'asc' } } }, orderBy: [{ sortOrder: 'asc' }, { severity: 'asc' }, { createdAt: 'desc' }] },
+        findings: { include: { assignee: true, evidence: { orderBy: { createdAt: 'asc' } } }, orderBy: [{ severity: 'asc' }, { createdAt: 'desc' }] },
         lead: true,
         reports: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, version: true, status: true, templateName: true, reviewerId: true, reviewedAt: true, authorId: true, createdAt: true } },
       },
@@ -32,6 +33,9 @@ export default async function ReportPage({params }: Props) {
   ]);
 
   if (!project) notFound();
+
+  // Apply drag-and-drop order before any per-severity grouping in the report
+  project.findings = await sortFindingsBySortOrder(project.findings, id);
 
   const rawExtra = rawRows[0] ?? {};
 

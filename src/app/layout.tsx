@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import Script from 'next/script';
 import { ThemeLoader } from '@/components/ThemeLoader';
 import './globals.css';
 
@@ -26,7 +27,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400&display=swap"
           rel="stylesheet"
         />
-        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_THEME }} />
+        <Script id="aegis-no-flash-theme" strategy="beforeInteractive">
+          {NO_FLASH_THEME}
+        </Script>
       </head>
       <body style={{ height: '100%', margin: 0 }}>
         <ThemeLoader />

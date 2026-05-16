@@ -366,11 +366,15 @@ function makeMarkdownComponents(resolveImage?: ResolveImage) {
         display: 'block',
       };
       return (
-        <div className="rpt-figure">
+        // Use <span> (with display:block) instead of <div> so this is valid
+        // HTML even when react-markdown wraps an image-only paragraph in <p>
+        // (a <div> inside <p> triggers a hydration error). The visual is
+        // identical because the spans are forced to block layout.
+        <span className="rpt-figure" style={{ display: 'block' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={finalSrc} alt={parsed.alt} style={imgStyle} />
-          {parsed.alt && <div className="rpt-figure-caption"><b>Figure.</b> {parsed.alt}</div>}
-        </div>
+          {parsed.alt && <span className="rpt-figure-caption" style={{ display: 'block' }}><b>Figure.</b> {parsed.alt}</span>}
+        </span>
       );
     },
   };
@@ -874,15 +878,31 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
     } catch { return []; }
   })();
 
-  const sorted = [...findings].sort((a, b) =>
-    SEV_ORDER.indexOf(a.severity as Sev) - SEV_ORDER.indexOf(b.severity as Sev)
-  );
+  // Use the order the server sends us (sortOrder ASC, applied via
+  // sortFindingsBySortOrder in report/page.tsx). When the user drags a low
+  // severity finding above a critical one, that order wins in the report —
+  // pages 4.x simply iterate severity sections in sortOrder of their first
+  // member, so the drag intent is fully respected end to end.
+  const sorted = [...findings];
+  // Re-derive severity-section ordering from the persisted finding order so
+  // a section appears as soon as its first finding does.
+  const seenSev = new Set<string>();
+  const sevOrder: string[] = [];
+  for (const f of sorted) {
+    if (!seenSev.has(f.severity)) { seenSev.add(f.severity); sevOrder.push(f.severity); }
+  }
 
   const totalFindings = Object.values(counts).reduce((a, b) => a + b, 0);
   const critHigh = (counts.critical || 0) + (counts.high || 0);
 
   // Active severity groups (non-empty, in order)
-  const activeSevGroups = SEV_ORDER.filter(s => (counts[s] || 0) > 0);
+  // Sections appear in the order their first finding appears in the user's
+  // drag order. So if you drag a Low above a Critical, the Low section comes
+  // first in the report. Severities not present in `sorted` (e.g. zero count)
+  // get filtered out automatically.
+  const activeSevGroups = (sevOrder.length > 0
+    ? sevOrder
+    : SEV_ORDER.filter(s => (counts[s] || 0) > 0)) as Sev[];
 
   // ── Page numbering ──────────────────────────────────────────────────────────
   // Fixed pages: 1=Cover, 2=DocControl, 3=TOC

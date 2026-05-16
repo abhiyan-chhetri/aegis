@@ -46,17 +46,44 @@ export async function POST(request: NextRequest) {
     const sizeKB = Math.round(stats.size / 1024);
     const sizeStr = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
 
+    // ── Count pages from the produced PDF ─────────────────────────────────────
+    // Cheap-and-cheerful: regex `/Type /Page` (not /Pages) occurrences in the
+    // raw PDF bytes. Robust enough for puppeteer-produced PDFs which don't
+    // do anything exotic.
+    let pageCount = 1;
+    try {
+      const pdfBytes = await fs.readFile(filePath);
+      const matches = pdfBytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g);
+      if (matches && matches.length > 0) pageCount = matches.length;
+    } catch { /* ignore — keep default 1 */ }
+
+    // Helper: bump "1.0" → "1.1" or "v1" → "v2" sensibly
+    function bumpVersion(prev: string | null | undefined): string {
+      if (!prev) return '1.0';
+      const m1 = prev.match(/^(\d+)\.(\d+)$/);
+      if (m1) return `${m1[1]}.${parseInt(m1[2], 10) + 1}`;
+      const m2 = prev.match(/^v(\d+)$/i);
+      if (m2) return `v${parseInt(m2[1], 10) + 1}`;
+      // Plain integer or unknown format — append a counter
+      const m3 = prev.match(/^(\d+)$/);
+      if (m3) return String(parseInt(m3[1], 10) + 1);
+      return `${prev}.1`;
+    }
+
     // ── Upsert Report DB record (1 report per project) ────────────────────────
     if (action === 'save' && session) {
-      // Check if a report already exists for this project
       const existing = await db.report.findFirst({ where: { projectId } });
 
       if (existing) {
-        // Update the existing record (keep status/reviewerId as-is, just update pages/size)
+        // Regenerate → bump the version and refresh page count + size. Reset
+        // review state since the content has changed (matches the existing
+        // "approved → in-review on edit" pattern).
+        const nextVersion = bumpVersion(existing.version);
         await db.report.update({
           where: { id: existing.id },
           data: {
-            pages: 0, // we don't count pages here, left at 0
+            version: nextVersion,
+            pages: pageCount,
             size: sizeStr,
             updatedAt: new Date(),
           },
@@ -70,10 +97,10 @@ export async function POST(request: NextRequest) {
             code,
             projectId,
             templateName: 'Technical Report',
-            version: 'v1',
+            version: '1.0',
             status: 'draft',
             authorId: session.id,
-            pages: 0,
+            pages: pageCount,
             size: sizeStr,
           },
         });

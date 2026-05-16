@@ -133,11 +133,17 @@ function rangeStart(key: string): number {
   return 0;
 }
 
+const ACTIVITY_PAGE_SIZE = 20;
+
 export function ActivityFeed({ activities }: { activities: Activity[] }) {
   const [q, setQ] = useState('');
   const [userFilter, setUserFilter] = useState<string>(''); // user id
   const [actionFilter, setActionFilter] = useState<string>('');
   const [range, setRange] = useState<string>('');
+  const [page, setPage] = useState(1);
+
+  // Reset to page 1 whenever a filter changes
+  React.useEffect(() => { setPage(1); }, [q, userFilter, actionFilter, range]);
 
   // Unique user list for the user-filter dropdown
   const users = useMemo(() => {
@@ -251,6 +257,12 @@ export function ActivityFeed({ activities }: { activities: Activity[] }) {
     );
   }
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ACTIVITY_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = filtered.slice((safePage - 1) * ACTIVITY_PAGE_SIZE, safePage * ACTIVITY_PAGE_SIZE);
+  const start = filtered.length === 0 ? 0 : (safePage - 1) * ACTIVITY_PAGE_SIZE + 1;
+  const end   = Math.min(safePage * ACTIVITY_PAGE_SIZE, filtered.length);
+
   return (
     <>
       {FilterBar}
@@ -259,8 +271,9 @@ export function ActivityFeed({ activities }: { activities: Activity[] }) {
           No activity matches the current filters.
         </div>
       ) : (
+        <>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-      {filtered.map((activity) => {
+      {paged.map((activity) => {
         const timeAgo = (() => {
           const date = new Date(activity.createdAt);
           const now = new Date();
@@ -444,8 +457,45 @@ export function ActivityFeed({ activities }: { activities: Activity[] }) {
         );
       })}
     </div>
+        {/* Pagination footer */}
+        {totalPages > 1 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            paddingTop: 14, marginTop: 8, borderTop: '1px solid var(--line-1)',
+            fontSize: 11.5, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', gap: 8,
+          }}>
+            <span>Showing {start}–{end} of {filtered.length}</span>
+            <span style={{ display: 'inline-flex', gap: 4 }}>
+              <PageBtn onClick={() => setPage(1)}                       disabled={safePage === 1}>«</PageBtn>
+              <PageBtn onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1}><Ico name="chevLeft" size={11} /></PageBtn>
+              <span style={{ padding: '0 8px', color: 'var(--ink-2)' }}>{safePage} / {totalPages}</span>
+              <PageBtn onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages}><Ico name="chevRight" size={11} /></PageBtn>
+              <PageBtn onClick={() => setPage(totalPages)}              disabled={safePage === totalPages}>»</PageBtn>
+            </span>
+          </div>
+        )}
+        </>
       )}
     </>
+  );
+}
+
+// ── Pagination button ───────────────────────────────────────────────────────
+function PageBtn({ onClick, children, disabled }: { onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        minWidth: 24, height: 22, padding: '0 6px',
+        border: '1px solid var(--line-1)', borderRadius: 'var(--r-xs)',
+        background: 'transparent', color: 'var(--ink-2)',
+        fontSize: 11, fontFamily: 'var(--font-mono)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.35 : 1,
+      }}
+    >{children}</button>
   );
 }
 

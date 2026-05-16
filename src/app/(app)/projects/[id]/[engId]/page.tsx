@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Ico } from '@/components/chrome/icons';
+import { sortFindingsBySortOrder } from '@/lib/sortFindings';
 import { ProjectTabs } from '../ProjectTabs';
 
 // /projects/[id]/[engId]
@@ -22,7 +23,7 @@ export default async function EngagementDetailPage({ params }: Props) {
       where: { id: engId },
       include: {
         lead: true,
-        findings: { include: { assignee: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }] },
+        findings: { include: { assignee: true }, orderBy: { createdAt: 'desc' } },
         reports: { include: { author: true }, orderBy: { createdAt: 'desc' }, take: 3 },
       },
     }),
@@ -39,6 +40,9 @@ export default async function EngagementDetailPage({ params }: Props) {
   ]);
 
   if (!project) notFound();
+
+  // Apply manual drag-and-drop order without depending on a regenerated client
+  project.findings = await sortFindingsBySortOrder(project.findings, engId);
 
   // Fetch review data for reports
   const reportIds = project.reports?.map((r: any) => r.id) ?? [];

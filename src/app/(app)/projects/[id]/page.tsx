@@ -6,6 +6,7 @@ import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
 import { TrackRecent } from '@/components/chrome/TrackRecent';
 import { Ico } from '@/components/chrome/icons';
+import { sortFindingsBySortOrder } from '@/lib/sortFindings';
 import { ProjectTabs } from './ProjectTabs';
 import { EngagementYearSelector } from './EngagementYearSelector';
 
@@ -49,7 +50,7 @@ export default async function ProjectPage({ params }: Props) {
       where: { id: projectId },
       include: {
         lead: true,
-        findings: { include: { assignee: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }] },
+        findings: { include: { assignee: true }, orderBy: { createdAt: 'desc' } },
         reports: { include: { author: true }, orderBy: { createdAt: 'desc' }, take: 3 },
       },
     }),
@@ -66,6 +67,10 @@ export default async function ProjectPage({ params }: Props) {
   ]);
 
   if (!project) notFound();
+
+  // Apply manual drag-and-drop order. Done after fetch (instead of via Prisma
+  // orderBy) so it works even before someone runs `prisma generate`.
+  project.findings = await sortFindingsBySortOrder(project.findings, projectId);
 
   // Fetch review data for reports
   const reportIds = project?.reports?.map((r: any) => r.id) ?? [];
