@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Ico } from '@/components/chrome/icons';
+import { toast } from '@/components/ui/Toast';
 import { Avatar } from '@/components/chrome/icons';
 import { Sev, StatusPill, SevCounts } from '@/components/ui/SevBadge';
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
@@ -557,6 +558,7 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
         ((counts.critical || 0) * 10 + (counts.high || 0) * 7 + (counts.medium || 0) * 4 + (counts.low || 0) * 1) / Math.max(1, findings.length)
       );
       const ctx = {
+        projectId: project.id, // server resolves dataClassification + criticality from this
         projectName: project.name,
         engagement: project.engagement || 'Web Application',
         findings: findings.map(f => ({ title: f.title, severity: f.severity, cvss: f.cvss })),
@@ -699,14 +701,17 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           const body = await res.json().catch(() => ({}));
           console.error('[reorder] failed:', res.status, body);
           setReorderSaveStatus('error');
+          toast.error('Couldn\'t save order', { description: body?.error || `HTTP ${res.status}` });
           return;
         }
         setReorderSaveStatus('saved');
         setTimeout(() => setReorderSaveStatus(prev => prev === 'saved' ? 'idle' : prev), 1800);
+        toast.success('Finding order saved');
       })
       .catch(err => {
         console.error('[reorder] network error:', err);
         setReorderSaveStatus('error');
+        toast.error('Couldn\'t save order', { description: 'Network error' });
       });
   }
   function handleDragEnd() { setDragId(null); setDragOverId(null); }

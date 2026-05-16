@@ -27,6 +27,24 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: '2.0.0',
+    date: '2026-05-15',
+    title: 'Data-Aware CVSS, CWE/OWASP Insights, Personal Stats & Toast Notifications',
+    summary: 'Reports now match the actual business risk, not the textbook risk. Every project carries a Data Classification (C1–C4) and Asset Criticality (Diamond/Silver/Bronze/Other), and every CVSS score auto-adjusts: "HIGH confidentiality" on a C1 public asset becomes "low"; "LOW integrity" on a Diamond asset becomes "high". The AI prompt is told all of this so impact wording matches too. Plus: a workspace-wide Insights page showing which CWE / OWASP classes the team finds most, a Personal Stats panel on the Team page, and slide-in toast notifications for every save / approval / undo.',
+    highlight: true,
+    changes: [
+      { type: 'new', text: 'Data classification (C1 Public · C2 Internal · C3 Confidential · C4 Restricted) and Asset Criticality (Diamond · Silver · Bronze · Other) per project — set on the New Project form and persisted to the database' },
+      { type: 'new', text: 'Automatic CVSS environmental adjustment — confidentiality letters roll down on public C1 assets and roll up on regulated C4 assets; integrity / availability letters roll down on Bronze and roll up on Diamond. Severity and final CVSS score recompute automatically from the adjusted vector' },
+      { type: 'new', text: 'AI prompt now receives the project\'s data classification and criticality as context, with explicit rules so impact narrative wording matches the actual asset — no more "data breach" language for a C1 public site' },
+      { type: 'new', text: 'Workspace Insights page — aggregate CWE / OWASP frequency map across every project with a ring chart of the top categories, a sortable bar list, severity-mix mini-bars per row, coverage banner, and search / top-N filters' },
+      { type: 'new', text: 'Personal Stats panel on the Team page — your findings discovered, projects led, projects touched, average CVSS, severity breakdown, 6-month velocity bar chart, and your top 5 CWEs' },
+      { type: 'new', text: 'Slide-in toast notifications — reusable queued <Toast> component. Wired into finding save / create, report submit / approve / reject, drag-reorder save, with action buttons (e.g. Undo) and error variants with details' },
+      { type: 'improved', text: 'New Project form: added Data Classification and Asset Criticality dropdowns with inline guidance text explaining how each value will affect CVSS scoring' },
+      { type: 'improved', text: 'AI generate route now resolves the project\'s data classification / criticality server-side from a passed projectId — the client just sends the project id and the AI gets the context automatically' },
+      { type: 'improved', text: 'fixdb.sh updated to add the two new columns idempotently; existing installs upgrade in place without data loss' },
+    ],
+  },
+  {
     version: '1.9.0',
     date: '2026-05-15',
     title: 'Inbox, Filterable Activity, Animated Counters & a Safer Redeploy Script',

@@ -21,6 +21,9 @@ export interface FindingGenerationContext {
   projectName?: string;
   assets?: string;
   notes?: string;           // project engagement notes — sent to AI for richer context
+  /** Environmental adjustment context (drives impact wording + CVSS rolldown) */
+  dataClassification?: 'C1' | 'C2' | 'C3' | 'C4';
+  criticality?: 'diamond' | 'silver' | 'bronze' | 'other';
 }
 
 export interface GeneratedFinding {
@@ -42,6 +45,8 @@ export interface ExecutiveSummaryContext {
   projectName: string;
   engagement: string;
   notes?: string;           // project engagement notes
+  dataClassification?: 'C1' | 'C2' | 'C3' | 'C4';
+  criticality?: 'diamond' | 'silver' | 'bronze' | 'other';
   findings: Array<{
     title: string;
     severity: string;
@@ -471,6 +476,36 @@ fences around the JSON:
 }`;
 
 function buildFindingUserMessage(ctx: FindingGenerationContext): string {
+  // Build a clear environmental brief so the model picks CVSS letters and
+  // wording that actually match this asset, not the worst-case textbook impact.
+  const envBlock = (() => {
+    const cls = ctx.dataClassification;
+    const crit = ctx.criticality;
+    if (!cls && !crit) return '';
+    const dataLabel: Record<string, string> = {
+      C1: 'C1 — PUBLIC (the data this asset handles is already public)',
+      C2: 'C2 — INTERNAL (some internal-only data; limited contractual sensitivity)',
+      C3: 'C3 — CONFIDENTIAL (customer/contractual data — default assumption)',
+      C4: 'C4 — RESTRICTED (regulated data: PCI, PHI, secrets, government)',
+    };
+    const critLabel: Record<string, string> = {
+      diamond: 'Diamond — Tier-0 critical (mission-critical, any outage is severe)',
+      silver:  'Silver — Business-critical (important but recoverable)',
+      bronze:  'Bronze — Standard internal system (limited business impact)',
+      other:   'Other — Sandbox / test (minimal real-world consequence)',
+    };
+    return `\nASSET ENVIRONMENT (use this to set CVSS Confidentiality / Integrity / Availability letters and to tone the IMPACT section appropriately):
+- Data classification: ${cls ? dataLabel[cls] : 'C3 (default)'}
+- Asset criticality:   ${crit ? critLabel[crit] : 'silver (default)'}
+
+CVSS environmental rules to apply automatically:
+- If the data class is C1 (Public), set CVSS Confidentiality letter to "L" or "N" even if the textbook impact for this class of vulnerability is High — the data is already public.
+- If the data class is C4 (Restricted), set Confidentiality to "H" if any meaningful data exposure occurs, even when the textbook impact would be "L".
+- If the asset criticality is Diamond, set CVSS Integrity / Availability letters to "H" whenever the vulnerability affects them at all.
+- If the asset criticality is Bronze or Other, downgrade Integrity / Availability "H" letters to "L".
+- The IMPACT section should reflect these adjustments in plain English. Do NOT describe data breach impact for a C1 public asset. Do NOT describe outage severity in catastrophic terms on a Bronze sandbox.`;
+  })();
+
   return `Write a finding entry based STRICTLY on the information below. Do not invent
 endpoints, payloads, HTTP requests, vendor names, software versions, or
 specifics that aren't in the notes. If the tester only named a vulnerability
@@ -479,7 +514,7 @@ Keep every section short.
 
 VULNERABILITY TITLE: ${ctx.title}
 ${ctx.projectName ? `TARGET / PROJECT: ${ctx.projectName}` : ''}
-${ctx.assets ? `AFFECTED ASSETS: ${ctx.assets}` : ''}
+${ctx.assets ? `AFFECTED ASSETS: ${ctx.assets}` : ''}${envBlock}
 ${ctx.description ? `\nTESTER NOTES & DESCRIPTION (this is the source of truth — write from this, not from your training data):\n${ctx.description}` : ''}
 ${ctx.reproduction ? `\nREPRODUCTION STEPS (tester's draft — tighten and number them, do NOT invent additional steps or payloads):\n${ctx.reproduction}` : ''}
 ${ctx.notes ? `\nENGAGEMENT CONTEXT (project notes — use these for client context, tested assets, business sector; do NOT add facts not in here):\n${ctx.notes}` : ''}
@@ -535,6 +570,8 @@ PROJECT: ${ctx.projectName}
 ENGAGEMENT TYPE: ${ctx.engagement}
 ${ctx.startDate ? `TESTING PERIOD: ${ctx.startDate} — ${ctx.endDate}` : ''}
 COMPOSITE RISK SCORE: ${ctx.riskScore.toFixed(1)}/10
+${ctx.dataClassification ? `DATA CLASSIFICATION: ${ctx.dataClassification} (${ctx.dataClassification === 'C1' ? 'Public' : ctx.dataClassification === 'C2' ? 'Internal' : ctx.dataClassification === 'C3' ? 'Confidential' : 'Restricted'}) — temper confidentiality language accordingly` : ''}
+${ctx.criticality ? `ASSET CRITICALITY: ${ctx.criticality} — temper integrity/availability and business-impact language accordingly` : ''}
 
 FINDING DISTRIBUTION:
 - Critical: ${ctx.counts.critical ?? 0}

@@ -4,6 +4,7 @@ import React, { useState, useRef, useLayoutEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Ico } from '@/components/chrome/icons';
+import { toast } from '@/components/ui/Toast';
 
 // ── Layout constants ────────────────────────────────────────────────────────
 const PAGE_H    = 1123;   // A4 @ 96 dpi
@@ -835,19 +836,26 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
       const data = await res.json();
       if (!res.ok) {
         setReviewError(data.error || 'Failed to submit review action');
+        toast.error('Review action failed', { description: data.error || `HTTP ${res.status}` });
       } else {
         if (action === 'submit') {
           setReportStatus('in-review');
           const rv = allUsers.find(u => u.id === selectedReviewerId);
           if (rv) setReviewerName(rv.name);
+          toast.success('Report submitted for review', {
+            description: rv ? `${rv.name} will be notified` : 'Reviewer assigned',
+          });
         } else if (action === 'approve') {
           setReportStatus('approved');
+          toast.success('Report approved', { description: 'Marked as final and ready for delivery' });
         } else if (action === 'reject') {
           setReportStatus('rejected');
+          toast.warn('Report rejected', { description: 'Author can address feedback and resubmit' });
         }
       }
     } catch {
       setReviewError('Network error');
+      toast.error('Network error', { description: 'Review action did not reach the server' });
     } finally {
       setReviewSubmitting(false);
     }

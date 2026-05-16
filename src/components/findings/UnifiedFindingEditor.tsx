@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
 import { LivePresence } from '@/components/collab/LivePresence';
+import { toast } from '@/components/ui/Toast';
 import { FindingComments } from './FindingComments';
 import { ScreenshotAnnotator } from './ScreenshotAnnotator';
 
@@ -479,6 +480,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         body: JSON.stringify({
           type: 'finding',
           context: {
+            projectId, // server resolves dataClassification + criticality from this
             title: title || 'Untitled vulnerability',
             description,
             reproduction,
@@ -498,9 +500,12 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       if (wants('metadata')) {
         if (r.cwe) setCwe(r.cwe);
         if (r.owasp) setOwasp(r.owasp);
-        if (r.severity) { setSeverity(r.severity); setSeverityLocked(true); }
         if (r.cvss) {
           const cv = r.cvss as Record<string, string>;
+          // Client-side belt-and-braces: even if the model didn't perfectly
+          // apply the environmental CVSS rolldown, the API enriched the
+          // context. We trust the letters the model returned and derive
+          // severity from the recomputed score below.
           setCvss({
             AV: (cv.AV || 'N') as 'N'|'A'|'L'|'P',
             AC: (cv.AC || 'L') as 'L'|'H',
@@ -512,6 +517,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             A:  (cv.A  || 'N') as 'N'|'L'|'H',
           });
         }
+        if (r.severity) { setSeverity(r.severity); setSeverityLocked(true); }
         if (Array.isArray(r.assets) && r.assets.length > 0) {
           setAffectedAssets(prev => prev || r.assets.join('\n'));
         }
@@ -671,11 +677,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
   // Save / create
   async function handleSave() {
-    if(!title.trim()){ setError('Title is required'); return; }
+    if(!title.trim()){ setError('Title is required'); toast.error('Title is required'); return; }
     setError(''); setSaving(true);
     try {
       if(isEditing && finding?.id) {
-        await fetch(`/api/findings/${finding.id}`,{
+        const res = await fetch(`/api/findings/${finding.id}`,{
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
             title,severity,status,cwe,owasp,description,reproduction,impact,remediation,references,
@@ -684,7 +690,9 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
           }),
         });
+        if (!res.ok) { toast.error('Save failed', { description: `HTTP ${res.status}` }); return; }
         setSaved(true); setTimeout(()=>setSaved(false),2500);
+        toast.success('Finding saved', { description: title });
       } else {
         const res = await fetch(`/api/projects/${projectId}/findings`,{
           method:'POST', headers:{'Content-Type':'application/json'},
@@ -696,11 +704,17 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
           }),
         });
-        if(!res.ok){ const d=await res.json().catch(()=>({})); setError(d.error||'Failed to create finding'); return; }
+        if(!res.ok){
+          const d=await res.json().catch(()=>({}));
+          setError(d.error||'Failed to create finding');
+          toast.error('Couldn\'t create finding', { description: d.error || `HTTP ${res.status}` });
+          return;
+        }
         const data=await res.json();
+        toast.success('Finding created', { description: title.trim() });
         router.push(`/projects/${projectId}/findings/${data.finding?.id ?? data.id}`);
       }
-    } catch { setError('Network error'); }
+    } catch { setError('Network error'); toast.error('Network error', { description: 'Check your connection and try again' }); }
     finally { setSaving(false); }
   }
 

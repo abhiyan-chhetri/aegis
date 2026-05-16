@@ -142,6 +142,10 @@ CREATE INDEX IF NOT EXISTS "FindingComment_findingId_idx" ON "FindingComment"("f
 ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "sortOrder" INTEGER NOT NULL DEFAULT 999999;
 CREATE INDEX IF NOT EXISTS "Finding_projectId_sortOrder_idx" ON "Finding"("projectId", "sortOrder");
 
+-- v2.0 / data classification + asset criticality (drives CVSS environmental adj)
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "dataClassification" TEXT NOT NULL DEFAULT 'C3';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "criticality"        TEXT NOT NULL DEFAULT 'silver';
+
 -- Future idempotent patches — append here, never DROP existing tables/columns
 SQL
 success "All schema patches applied"

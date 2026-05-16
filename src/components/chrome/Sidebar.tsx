@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: '/reports',     icon: 'reports',   label: 'Reports' },
   { href: '/team',        icon: 'team',      label: 'Team' },
   { href: '/portfolio',   icon: 'projects',  label: 'Portfolio' },
+  { href: '/insights',    icon: 'chart',     label: 'Insights' },
   { href: '/audit-trail', icon: 'library',   label: 'Audit Trail' },
   { href: '/changelog',   icon: 'paper',     label: 'Changelog' },
 ];

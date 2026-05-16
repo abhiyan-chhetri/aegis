@@ -40,6 +40,15 @@ model Project {
   notes            String   @default("")
   status           String   @default("in-progress")
   progress         Int      @default(0)
+  /// Corporate data-classification of the asset under test.
+  /// C1 = Public, C2 = Internal, C3 = Confidential, C4 = Restricted.
+  /// Drives CVSS environmental adjustment of the Confidentiality dimension
+  /// and is fed to the AI prompt for context-aware impact wording.
+  dataClassification String @default("C3")
+  /// Asset criticality tier — Diamond > Silver > Bronze > Other.
+  /// Drives CVSS environmental adjustment of the Integrity / Availability
+  /// dimensions and again is passed to the AI for context.
+  criticality        String @default("silver")
   startDate        String
   endDate          String
   leadId           String

@@ -30,7 +30,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { type, context } = body as { type: 'finding' | 'summary'; context: unknown };
+    const { type, context } = body as {
+      type: 'finding' | 'summary';
+      context: Record<string, unknown> & { projectId?: string };
+    };
 
     if (!type || !['finding', 'summary'].includes(type)) {
       return NextResponse.json({ error: 'Invalid type — must be "finding" or "summary"' }, { status: 400 });
@@ -38,15 +41,31 @@ export async function POST(request: NextRequest) {
 
     const config = await getAIConfig();
 
+    // Look up the project's environmental settings (data class + criticality)
+    // so EVERY AI call automatically gets context-aware impact wording — the
+    // client doesn't have to remember to send them.
+    let envContext: { dataClassification?: string; criticality?: string } = {};
+    if (context?.projectId) {
+      try {
+        const rows = await db.$queryRawUnsafe<{ dataClassification: string; criticality: string }[]>(
+          `SELECT COALESCE("dataClassification", 'C3') AS "dataClassification",
+                  COALESCE("criticality", 'silver') AS "criticality"
+           FROM "Project" WHERE id = $1`,
+          context.projectId,
+        );
+        if (rows[0]) envContext = rows[0];
+      } catch { /* columns may not exist on very old DBs — ignore */ }
+    }
+    // Merge: server-fetched env overrides any client-supplied values
+    const enrichedCtx = { ...context, ...envContext };
+
     if (type === 'finding') {
-      const ctx = context as Parameters<typeof generateFinding>[1];
-      const result = await generateFinding(config, ctx);
+      const result = await generateFinding(config, enrichedCtx as Parameters<typeof generateFinding>[1]);
       return NextResponse.json({ result, provider: config.provider });
     }
 
     if (type === 'summary') {
-      const ctx = context as Parameters<typeof generateSummary>[1];
-      const result = await generateSummary(config, ctx);
+      const result = await generateSummary(config, enrichedCtx as Parameters<typeof generateSummary>[1]);
       return NextResponse.json({ result, provider: config.provider });
     }
 

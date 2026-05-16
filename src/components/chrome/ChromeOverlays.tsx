@@ -11,6 +11,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Ico } from './icons';
+import { ToastViewport } from '@/components/ui/Toast';
 
 // ─── Theme ───────────────────────────────────────────────────────────────────
 const THEME_KEY = 'aegis.theme';
@@ -121,6 +122,8 @@ export function ChromeOverlays() {
 
   return (
     <>
+      {/* Toast queue — bottom-right, above the theme button */}
+      <ToastViewport />
       {/* Floating theme button (bottom-right). Discreet, always available. */}
       <button
         onClick={toggleTheme}

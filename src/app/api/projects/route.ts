@@ -59,7 +59,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { name, code, engagement, scope, members, assetOwners, startDate, endDate, leadId,
-            targetCode, engagementYear, previousEngagementId } = body;
+            targetCode, engagementYear, previousEngagementId,
+            dataClassification, criticality } = body;
 
     if (!name || !code || !engagement || !startDate || !endDate || !leadId) {
       return NextResponse.json(
@@ -87,11 +88,15 @@ export async function POST(request: NextRequest) {
     const membersJson = Array.isArray(members) ? JSON.stringify(members) : (members ?? '[]');
     const assetOwnersJson = Array.isArray(assetOwners) ? JSON.stringify(assetOwners) : (assetOwners ?? '[]');
     await db.$executeRawUnsafe(
-      `UPDATE "Project" SET members = $1, "assetOwners" = $2, "targetCode" = $3, "engagementYear" = $4, "previousEngagementId" = $5 WHERE id = $6`,
+      `UPDATE "Project" SET members = $1, "assetOwners" = $2, "targetCode" = $3, "engagementYear" = $4, "previousEngagementId" = $5,
+              "dataClassification" = $6, "criticality" = $7
+       WHERE id = $8`,
       membersJson, assetOwnersJson,
       targetCode || code,
       engagementYear || '',
       previousEngagementId || null,
+      (typeof dataClassification === 'string' && /^C[1-4]$/.test(dataClassification)) ? dataClassification : 'C3',
+      (typeof criticality === 'string' && ['diamond','silver','bronze','other'].includes(criticality)) ? criticality : 'silver',
       project.id
     );
 

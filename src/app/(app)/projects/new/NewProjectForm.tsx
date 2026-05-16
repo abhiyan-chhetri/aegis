@@ -179,6 +179,9 @@ export function NewProjectForm({ users, existingOwners }: Props) {
   const [targetCode, setTargetCode] = useState(preTargetCode);
   const [engagementYear, setEngagementYear] = useState(String(new Date().getFullYear()));
   const [previousEngagementId] = useState(prePrevEngId);
+  // v2.0 / Environmental: drives CVSS adjustment + AI prompt context
+  const [dataClassification, setDataClassification] = useState<'C1'|'C2'|'C3'|'C4'>('C3');
+  const [criticality, setCriticality] = useState<'diamond'|'silver'|'bronze'|'other'>('silver');
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
@@ -214,7 +217,7 @@ export function NewProjectForm({ users, existingOwners }: Props) {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners, targetCode, engagementYear, previousEngagementId }),
+        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners, targetCode, engagementYear, previousEngagementId, dataClassification, criticality }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -332,6 +335,64 @@ export function NewProjectForm({ users, existingOwners }: Props) {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+      </div>
+
+      {/* Data classification + Asset criticality — drive CVSS environmental adjustment + AI context */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 8 }}>
+        <div className="form-group">
+          <label className="form-label" htmlFor="proj-dataclass">Data Classification *</label>
+          <select
+            id="proj-dataclass"
+            className="input"
+            value={dataClassification}
+            onChange={e => setDataClassification(e.target.value as 'C1'|'C2'|'C3'|'C4')}
+            required
+            style={{ height: 38, fontSize: 13 }}
+          >
+            <option value="C1">C1 — Public</option>
+            <option value="C2">C2 — Internal</option>
+            <option value="C3">C3 — Confidential</option>
+            <option value="C4">C4 — Restricted</option>
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.5 }}>
+            {dataClassification === 'C1' && 'Information already public. High confidentiality impact rolls down to low.'}
+            {dataClassification === 'C2' && 'Internal use only. Some confidentiality value but not contractual.'}
+            {dataClassification === 'C3' && 'Confidential — customer / contractual data.'}
+            {dataClassification === 'C4' && 'Strictly restricted — regulated (PCI / PHI / secrets). Low confidentiality impact escalates.'}
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="proj-criticality">Asset Criticality *</label>
+          <select
+            id="proj-criticality"
+            className="input"
+            value={criticality}
+            onChange={e => setCriticality(e.target.value as 'diamond'|'silver'|'bronze'|'other')}
+            required
+            style={{ height: 38, fontSize: 13 }}
+          >
+            <option value="diamond">Diamond — Tier-0 critical</option>
+            <option value="silver">Silver — Business-critical</option>
+            <option value="bronze">Bronze — Standard</option>
+            <option value="other">Other — Low impact / sandbox</option>
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.5 }}>
+            {criticality === 'diamond' && 'Mission-critical. Even low integrity/availability impact is serious.'}
+            {criticality === 'silver' && 'Important. Outage hurts but is recoverable.'}
+            {criticality === 'bronze' && 'Standard system. High impact rolls down to low.'}
+            {criticality === 'other' && 'Sandbox / test. Minimal real-world consequence.'}
+          </div>
+        </div>
+      </div>
+      <div style={{
+        fontSize: 11, color: 'var(--ink-3)', marginBottom: 20, padding: '8px 12px',
+        background: 'var(--bg-2)', border: '1px solid var(--line-1)', borderRadius: 'var(--r-sm)',
+        borderLeft: '3px solid var(--accent)',
+      }}>
+        These two settings adjust every finding&rsquo;s CVSS environmental score and feed
+        the AI prompt with concrete impact context — so &ldquo;HIGH confidentiality&rdquo; on a public
+        C1 asset is auto-rolled down to &ldquo;low&rdquo;, and &ldquo;LOW integrity&rdquo; on a Diamond asset
+        is auto-escalated.
       </div>
 
       {/* Dates */}
