@@ -73,6 +73,58 @@
   --card-pad: 22px;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   LIGHT THEME — softer daylight palette. Activated via:
+     <html data-theme="light"> (toggled by command palette or shortcut T)
+   Variable names match the dark theme so every consumer just works.
+   ═══════════════════════════════════════════════════════════════════════ */
+html[data-theme="light"] {
+  --bg-0: #fbfaf6;
+  --bg-1: #ffffff;
+  --bg-2: #f4f1ea;
+  --bg-3: #ece8de;
+  --bg-4: #d9d5c8;
+
+  --line-1: rgba(15,17,21,0.08);
+  --line-2: rgba(15,17,21,0.14);
+  --line-3: rgba(15,17,21,0.22);
+
+  --ink-0: #1a1c20;
+  --ink-1: #2b2e34;
+  --ink-2: #595c63;
+  --ink-3: #8a8d94;
+  --ink-4: #b8bac0;
+
+  --sev-critical: #c0392b;
+  --sev-critical-bg: rgba(192,57,43,0.10);
+  --sev-high: #d98c2b;
+  --sev-high-bg: rgba(217,140,43,0.10);
+  --sev-medium: #b88a18;
+  --sev-medium-bg: rgba(184,138,24,0.10);
+  --sev-low: #3a6ea5;
+  --sev-low-bg: rgba(58,110,165,0.08);
+  --sev-info: #6b675e;
+  --sev-info-bg: rgba(107,103,94,0.08);
+
+  --status-open: #c0392b;
+  --status-progress: #d98c2b;
+  --status-review: #7a4dbf;
+  --status-resolved: #2f8a4c;
+  --status-accepted: #6b675e;
+
+  --accent: #b8923a;
+  --accent-ink: #ffffff;
+
+  --shadow-sm: 0 1px 2px rgba(15,17,21,0.06);
+  --shadow-md: 0 4px 12px rgba(15,17,21,0.08), 0 0 0 1px rgba(15,17,21,0.04);
+  --shadow-lg: 0 18px 40px rgba(15,17,21,0.14), 0 0 0 1px rgba(15,17,21,0.06);
+}
+
+/* Smooth theme transitions */
+html { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+html, body { transition: background-color 0.2s ease, color 0.2s ease; }
+
 /* ───── Base ───── */
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }

@@ -639,15 +639,67 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
     try { return JSON.parse(project.members || '[]') as string[]; } catch { return []; }
   }, [project.members]);
 
+  // Client-side ordered copy of findings so drag-and-drop can reorder instantly.
+  // Initialised from the server-provided order; resyncs only when the set of
+  // ids actually changes (new finding added / one deleted), not on every props
+  // update — so the user's drag order isn't blown away by a re-render.
+  const [orderedFindings, setOrderedFindings] = useState(findings);
+  const lastIdSig = useRef(findings.map(f => f.id).join('|'));
+  useEffect(() => {
+    const sig = findings.map(f => f.id).join('|');
+    if (sig !== lastIdSig.current) {
+      setOrderedFindings(findings);
+      lastIdSig.current = sig;
+    }
+  }, [findings]);
+
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const reorderActive = sevFilter === 'all' && !search;
+
+  function handleDragStart(e: React.DragEvent, id: string) {
+    if (!reorderActive) { e.preventDefault(); return; }
+    setDragId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', id); } catch { /* ignore */ }
+  }
+  function handleDragOver(e: React.DragEvent, id: string) {
+    if (!reorderActive || !dragId || dragId === id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverId(id);
+  }
+  function handleDragLeave() { setDragOverId(null); }
+  function handleDrop(e: React.DragEvent, targetId: string) {
+    e.preventDefault();
+    setDragOverId(null);
+    if (!dragId || dragId === targetId) { setDragId(null); return; }
+    const from = orderedFindings.findIndex(f => f.id === dragId);
+    const to   = orderedFindings.findIndex(f => f.id === targetId);
+    if (from < 0 || to < 0) { setDragId(null); return; }
+    const next = [...orderedFindings];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setOrderedFindings(next);
+    setDragId(null);
+    // Persist
+    fetch(`/api/projects/${project.id}/findings/reorder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderedIds: next.map(f => f.id) }),
+    }).catch(() => { /* silent — the local order still applies until next reload */ });
+  }
+  function handleDragEnd() { setDragId(null); setDragOverId(null); }
+
   const filtered = useMemo(() => {
-    return findings.filter(f => {
+    return orderedFindings.filter(f => {
       const matchSev = sevFilter === 'all' || f.severity === sevFilter;
       const matchSearch = !search ||
         f.title.toLowerCase().includes(search.toLowerCase()) ||
         f.code.toLowerCase().includes(search.toLowerCase());
       return matchSev && matchSearch;
     });
-  }, [findings, sevFilter, search]);
+  }, [orderedFindings, sevFilter, search]);
 
   const total = findings.length || 1;
   const resolved = findings.filter(f => f.status === 'resolved').length;
@@ -709,11 +761,20 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
               </div>
             </div>
 
+            {/* Drag hint — only shown when reorder is active */}
+            {reorderActive && findings.length > 1 && (
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Ico name="grip" size={12} />
+                Drag rows by the handle to reorder findings — order persists across the report and team.
+              </div>
+            )}
+
             {/* Table */}
             <div className="card" style={{ overflow: 'hidden' }}>
               <table className="tbl">
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }} />
                     <th style={{ width: 90 }}>ID</th>
                     <th>Title</th>
                     <th style={{ width: 110 }}>Severity</th>
@@ -726,12 +787,37 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
-                    <tr><td colSpan={8} style={{ textAlign: 'center', padding: '40px 14px', color: 'var(--ink-3)' }}>No findings match the current filter</td></tr>
+                    <tr><td colSpan={9} style={{ textAlign: 'center', padding: '40px 14px', color: 'var(--ink-3)' }}>No findings match the current filter</td></tr>
                   ) : filtered.map(f => (
-                    <tr key={f.id}>
+                    <tr
+                      key={f.id}
+                      draggable={reorderActive}
+                      onDragStart={e => handleDragStart(e, f.id)}
+                      onDragOver={e => handleDragOver(e, f.id)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={e => handleDrop(e, f.id)}
+                      onDragEnd={handleDragEnd}
+                      style={{
+                        opacity: dragId === f.id ? 0.4 : 1,
+                        borderTop: dragOverId === f.id ? '2px solid var(--accent)' : undefined,
+                        transition: 'opacity 0.12s, border-color 0.12s',
+                        cursor: reorderActive ? 'grab' : undefined,
+                      }}
+                    >
+                      <td style={{ textAlign: 'center', color: 'var(--ink-3)' }}>
+                        {reorderActive ? (
+                          <span title="Drag to reorder" style={{ cursor: 'grab', display: 'inline-flex' }}>
+                            <Ico name="grip" size={13} />
+                          </span>
+                        ) : null}
+                      </td>
                       <td><span className="mono" style={{ fontSize: 12, color: 'var(--ink-3)' }}>{f.code}</span></td>
                       <td>
-                        <Link href={`/projects/${project.id}/findings/${f.id}`} style={{ color: 'var(--ink-0)', textDecoration: 'none', fontWeight: 500 }}>{f.title}</Link>
+                        <Link
+                          href={`/projects/${project.id}/findings/${f.id}`}
+                          draggable={false}
+                          style={{ color: 'var(--ink-0)', textDecoration: 'none', fontWeight: 500 }}
+                        >{f.title}</Link>
                       </td>
                       <td><Sev level={f.severity} size="sm" /></td>
                       <td><StatusPill status={f.status} /></td>

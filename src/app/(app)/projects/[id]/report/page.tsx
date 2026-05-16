@@ -20,7 +20,7 @@ export default async function ReportPage({params }: Props) {
     db.project.findUnique({
       where: { id },
       include: {
-        findings: { include: { assignee: true, evidence: { orderBy: { createdAt: 'asc' } } } },
+        findings: { include: { assignee: true, evidence: { orderBy: { createdAt: 'asc' } } }, orderBy: [{ sortOrder: 'asc' }, { severity: 'asc' }, { createdAt: 'desc' }] },
         lead: true,
         reports: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, version: true, status: true, templateName: true, reviewerId: true, reviewedAt: true, authorId: true, createdAt: true } },
       },

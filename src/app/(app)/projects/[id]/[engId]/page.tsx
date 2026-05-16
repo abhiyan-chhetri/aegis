@@ -22,7 +22,7 @@ export default async function EngagementDetailPage({ params }: Props) {
       where: { id: engId },
       include: {
         lead: true,
-        findings: { include: { assignee: true }, orderBy: { createdAt: 'desc' } },
+        findings: { include: { assignee: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }] },
         reports: { include: { author: true }, orderBy: { createdAt: 'desc' }, take: 3 },
       },
     }),

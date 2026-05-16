@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
+import { TrackRecent } from '@/components/chrome/TrackRecent';
 import { Ico } from '@/components/chrome/icons';
 import { ProjectTabs } from './ProjectTabs';
 import { EngagementYearSelector } from './EngagementYearSelector';
@@ -48,7 +49,7 @@ export default async function ProjectPage({ params }: Props) {
       where: { id: projectId },
       include: {
         lead: true,
-        findings: { include: { assignee: true }, orderBy: { createdAt: 'desc' } },
+        findings: { include: { assignee: true }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }] },
         reports: { include: { author: true }, orderBy: { createdAt: 'desc' }, take: 3 },
       },
     }),
@@ -149,6 +150,14 @@ export default async function ProjectPage({ params }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <TrackRecent
+        id={project.id}
+        type="project"
+        label={project.name}
+        sub={`${project.engagement || ''}${engExtra.engagementYear ? ` · ${engExtra.engagementYear}` : ` · ${project.code}`}`}
+        href={`/projects/${projectId}`}
+        icon="projects"
+      />
       <Topbar
         breadcrumb={[
           { label: 'Projects', href: '/projects' },

@@ -27,6 +27,25 @@ interface Release {
 
 const RELEASES: Release[] = [
   {
+    version: '1.8.0',
+    date: '2026-05-15',
+    title: 'Command Palette, Light Theme, Resume Editing & Drag-to-Reorder Findings',
+    summary: 'Everything you do all day is now one keystroke away. Press ⌘K to fuzzy-search across every project, finding, report and action. Press ? for a full shortcut sheet. Press T to swap between the editorial dark theme and a calmer light theme. The dashboard remembers what you were last editing so picking up where you left off is one click. And findings inside a project can now be drag-and-dropped into the order you want them to appear in the report.',
+    highlight: true,
+    changes: [
+      { type: 'new', text: 'Command Palette (⌘K / Ctrl K) — fuzzy-search across all projects, findings, reports plus quick actions (theme toggle, shortcut sheet, new project, navigation). Grouped results with severity badges and per-user "Recent" memory backed by localStorage' },
+      { type: 'new', text: 'Light theme — a softer daylight palette activated via the floating sun/moon button (bottom-right), the T shortcut, or the command palette. Theme persists across reloads with a no-flash inline script that applies the chosen theme before first paint' },
+      { type: 'new', text: 'Keyboard shortcuts overlay (?) — press the question mark anywhere to see every shortcut grouped by category (Navigation, Appearance, Editor, Lists, Help)' },
+      { type: 'new', text: 'Chord shortcuts (G then X) — press G then D for Dashboard, G then P for Projects, G then L for Library, G then R for Reports, G then C for Changelog, G then T for Team, G then A for Audit Trail, G then S for Settings' },
+      { type: 'new', text: 'Drag-and-drop ordering of findings — open any project\'s Findings tab and drag rows by the grip handle to set the exact order they appear in the report. Order persists per project across reloads and the whole team. Filtering or searching temporarily disables drag so you don\'t reorder a partial view by accident' },
+      { type: 'new', text: '"Resume editing" widget on the dashboard — the last three things you opened (project / finding / report) sit one click away in the right column, with severity colour-coding for findings' },
+      { type: 'improved', text: 'Sidebar nav links now slide a coloured accent stripe in on hover and indent slightly — small detail, lots of perceived polish' },
+      { type: 'improved', text: 'Cards lift 1 px on hover, buttons press 0 px on :active for tactile feedback. Transitions kept under 200 ms — alive but not flashy' },
+      { type: 'improved', text: '"Generate with AI" sparkle icon now spins while the request is in flight so you know something is happening' },
+      { type: 'improved', text: 'Dashboard KPI tiles and changelog release cards stagger-fade in on mount via the new anime.js helpers (Reveal, StaggerList, CountUp)' },
+    ],
+  },
+  {
     version: '1.7.0',
     date: '2026-05-15',
     title: 'Full-Screen Writing, Section-Level AI & a Less-Lying AI Model',

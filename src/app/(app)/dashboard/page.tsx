@@ -6,6 +6,7 @@ import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { MentionsList } from '@/components/dashboard/MentionsList';
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed';
+import { ResumeEditing } from '@/components/dashboard/ResumeEditing';
 import { Topbar } from '@/components/chrome/Topbar';
 import { Avatar, Ico } from '@/components/chrome/icons';
 import { SevCounts, StatusPill } from '@/components/ui/SevBadge';
@@ -326,6 +327,9 @@ export default async function DashboardPage() {
 
           {/* Right column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+            {/* Resume Editing — last items the user opened (from localStorage) */}
+            <ResumeEditing />
 
             {/* Report Activity — always visible */}
             <section className="card" style={{ overflow: 'hidden' }}>

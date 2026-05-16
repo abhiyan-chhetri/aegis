@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { Topbar } from '@/components/chrome/Topbar';
+import { TrackRecent } from '@/components/chrome/TrackRecent';
 import { Ico } from '@/components/chrome/icons';
 import { UnifiedFindingEditor } from '@/components/findings/UnifiedFindingEditor';
 
@@ -45,6 +46,15 @@ export default async function FindingPage({params }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <TrackRecent
+        id={finding.id}
+        type="finding"
+        label={finding.title}
+        sub={`${finding.code} · ${finding.project.name}`}
+        href={`/projects/${id}/findings/${finding.id}`}
+        icon="alert"
+        severity={finding.severity}
+      />
       <Topbar
         breadcrumb={['Projects', finding.project.name, 'Findings']}
         title={finding.title}

@@ -77,9 +77,15 @@ model Finding {
   references   String   @default("")
   assetOwner   String   @default("")
   hasCVE       Boolean  @default(false)
+  /// Manual drag-and-drop order within the project's Findings list and the
+  /// rendered report. Default 999999 puts unsorted findings last so the
+  /// severity ordering wins until the user explicitly reorders.
+  sortOrder    Int      @default(999999)
   discovered   String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  @@index([projectId, sortOrder])
 
   evidence   Evidence[]
   activities Activity[]

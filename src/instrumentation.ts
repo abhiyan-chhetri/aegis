@@ -48,6 +48,11 @@ export async function register() {
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`,
       `CREATE INDEX IF NOT EXISTS "FindingComment_findingId_idx" ON "FindingComment"("findingId")`,
+      // Manual sort order for findings within a project (drag-and-drop)
+      // Default 999999 puts unsorted findings at the bottom; severity ordering wins
+      // unless the user has explicitly set an order.
+      `ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "sortOrder" INTEGER NOT NULL DEFAULT 999999`,
+      `CREATE INDEX IF NOT EXISTS "Finding_projectId_sortOrder_idx" ON "Finding"("projectId", "sortOrder")`,
     ];
 
     for (const sql of migrations) {
