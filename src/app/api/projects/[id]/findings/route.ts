@@ -77,6 +77,46 @@ export async function POST(
       return NextResponse.json({ error: 'Title is required' }, { status: 400 });
     }
 
+    // Apply project's CVSS environmental adjustment to the incoming vector so
+    // the created finding's score / severity already match the asset's data
+    // classification + criticality.
+    let adjustedSeverity = severity;
+    let adjustedCvss = typeof cvss === 'number' ? cvss : parseFloat(cvss) || 0;
+    let adjustedVector = cvssVector;
+    if (typeof cvssVector === 'string' && cvssVector.includes(':')) {
+      try {
+        const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+        await ensureEnvColumns().catch(() => {});
+        const projRows = await db.$queryRawUnsafe<{ dataClassification: string; criticality: string }[]>(
+          `SELECT COALESCE("dataClassification",'C3') AS "dataClassification",
+                  COALESCE("criticality",'silver') AS "criticality"
+           FROM "Project" WHERE id = $1`,
+          projectId,
+        );
+        const env = projRows[0] ?? { dataClassification: 'C3', criticality: 'silver' };
+        const { adjustCvss } = await import('@/lib/cvss-env');
+        const parts = Object.fromEntries(
+          cvssVector.split('/').map((p: string) => p.split(':')),
+        ) as Record<string, string>;
+        if (parts.C && parts.I && parts.A) {
+          const adj = adjustCvss(
+            {
+              AV: parts.AV || 'N', AC: parts.AC || 'L', PR: parts.PR || 'N',
+              UI: parts.UI || 'N', S: parts.S || 'U',
+              C: parts.C as 'N'|'L'|'H', I: parts.I as 'N'|'L'|'H', A: parts.A as 'N'|'L'|'H',
+            },
+            env.dataClassification as 'C1'|'C2'|'C3'|'C4',
+            env.criticality as 'diamond'|'silver'|'bronze'|'other',
+          );
+          adjustedVector = `AV:${adj.adjusted.AV}/AC:${adj.adjusted.AC}/PR:${adj.adjusted.PR}/UI:${adj.adjusted.UI}/S:${adj.adjusted.S}/C:${adj.adjusted.C}/I:${adj.adjusted.I}/A:${adj.adjusted.A}`;
+          adjustedCvss = adj.score;
+          // Only override severity if the client didn't explicitly send one
+          // matching the AI's "free choice" baseline (medium default).
+          if (severity === 'medium') adjustedSeverity = adj.severity;
+        }
+      } catch { /* fall through with unadjusted values */ }
+    }
+
     // Auto-generate code: F-{count+1} padded to 3 digits
     const count = await db.finding.count({ where: { projectId } });
     const code = `F-${String(count + 1).padStart(3, '0')}`;
@@ -86,7 +126,7 @@ export async function POST(
         code,
         projectId,
         title,
-        severity,
+        severity: adjustedSeverity,
         status,
         summary,
         description,
@@ -100,8 +140,8 @@ export async function POST(
         assets: typeof assets === 'string' ? assets : JSON.stringify(assets ?? []),
         assetOwner,
         assigneeId: assigneeId ?? session.id,
-        cvss: typeof cvss === 'number' ? cvss : parseFloat(cvss) || 0,
-        cvssVector,
+        cvss: adjustedCvss,
+        cvssVector: adjustedVector,
         discovered: discovered ?? new Date().toISOString().split('T')[0],
       },
       include: {

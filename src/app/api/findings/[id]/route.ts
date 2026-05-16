@@ -73,6 +73,48 @@ export async function PATCH(
       'discovered', 'hasCVE',
     ];
 
+    // If the client sent a new cvssVector, automatically apply the project's
+    // environmental adjustment so the saved score / severity already reflect
+    // the asset's data classification + criticality. Means manual edits stay
+    // in sync with the env without needing a separate rescore.
+    if (typeof body.cvssVector === 'string' && body.cvssVector.includes(':')) {
+      try {
+        const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+        await ensureEnvColumns().catch(() => {});
+        const projRows = await db.$queryRawUnsafe<{ dataClassification: string; criticality: string }[]>(
+          `SELECT COALESCE("dataClassification",'C3') AS "dataClassification",
+                  COALESCE("criticality",'silver') AS "criticality"
+           FROM "Project" WHERE id = $1`,
+          currentFinding.projectId,
+        );
+        const env = projRows[0] ?? { dataClassification: 'C3', criticality: 'silver' };
+        const { adjustCvss } = await import('@/lib/cvss-env');
+        // Parse the incoming vector
+        const parts = Object.fromEntries(
+          body.cvssVector.split('/').map((p: string) => p.split(':')),
+        ) as Record<string, string>;
+        if (parts.C && parts.I && parts.A) {
+          const adj = adjustCvss(
+            {
+              AV: parts.AV || 'N', AC: parts.AC || 'L', PR: parts.PR || 'N',
+              UI: parts.UI || 'N', S: parts.S || 'U',
+              C: parts.C as 'N'|'L'|'H', I: parts.I as 'N'|'L'|'H', A: parts.A as 'N'|'L'|'H',
+            },
+            env.dataClassification as 'C1'|'C2'|'C3'|'C4',
+            env.criticality as 'diamond'|'silver'|'bronze'|'other',
+          );
+          // Overwrite the body's cvss + cvssVector + severity with adjusted values
+          body.cvssVector = `AV:${adj.adjusted.AV}/AC:${adj.adjusted.AC}/PR:${adj.adjusted.PR}/UI:${adj.adjusted.UI}/S:${adj.adjusted.S}/C:${adj.adjusted.C}/I:${adj.adjusted.I}/A:${adj.adjusted.A}`;
+          body.cvss = adj.score;
+          // Only force-set severity if the client didn't already pick one.
+          // If the user manually overrode severity we respect that.
+          if (!('severity' in body) || body.severity === currentFinding.severity) {
+            body.severity = adj.severity;
+          }
+        }
+      } catch { /* swallow — saving uncorrected is better than failing */ }
+    }
+
     const updateData: Record<string, unknown> = {};
     const changes: string[] = [];
 

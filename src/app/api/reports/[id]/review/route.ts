@@ -76,6 +76,16 @@ export async function POST(
         `<i>Please review the report at your earliest convenience.</i>`;
 
     } else if (action === 'approve') {
+      // Authorisation: only the assigned reviewer may approve.
+      // Empty-string reviewerId is also forbidden (orphan record).
+      const reviewerCheckRows = await db.$queryRawUnsafe<{ reviewerId: string | null }[]>(
+        `SELECT "reviewerId" FROM "Report" WHERE id = $1`,
+        id,
+      );
+      const assignedReviewerId = reviewerCheckRows[0]?.reviewerId ?? null;
+      if (!assignedReviewerId || assignedReviewerId !== session.id) {
+        return NextResponse.json({ error: 'Only the assigned reviewer can approve this report.' }, { status: 403 });
+      }
       updatedReport = await db.report.update({
         where: { id },
         data: { status: 'approved' },
@@ -115,6 +125,15 @@ export async function POST(
         `<i>The report is now <b>final</b> and ready for delivery to the client.</i>`;
 
     } else if (action === 'reject') {
+      // Same authorisation: only the assigned reviewer may reject.
+      const reviewerCheckRows = await db.$queryRawUnsafe<{ reviewerId: string | null }[]>(
+        `SELECT "reviewerId" FROM "Report" WHERE id = $1`,
+        id,
+      );
+      const assignedReviewerId = reviewerCheckRows[0]?.reviewerId ?? null;
+      if (!assignedReviewerId || assignedReviewerId !== session.id) {
+        return NextResponse.json({ error: 'Only the assigned reviewer can reject this report.' }, { status: 403 });
+      }
       updatedReport = await db.report.update({
         where: { id },
         data: { status: 'rejected' },

@@ -84,6 +84,12 @@ export async function POST(request: NextRequest) {
       include: { lead: true },
     });
 
+    // Ensure v2.0 env columns exist before referencing them in the UPDATE
+    try {
+      const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+      await ensureEnvColumns();
+    } catch { /* not fatal — fall back to the UPDATE which will fail loudly */ }
+
     // Set members, assetOwners, and engagement fields via raw SQL
     const membersJson = Array.isArray(members) ? JSON.stringify(members) : (members ?? '[]');
     const assetOwnersJson = Array.isArray(assetOwners) ? JSON.stringify(assetOwners) : (assetOwners ?? '[]');

@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
+import { toast } from '@/components/ui/Toast';
 
 type ScopeRow = { asset: string; type: string; notes: string };
 
@@ -21,6 +22,8 @@ type Project = {
   lead: { id: string; name: string };
   targetCode?: string;
   engagementYear?: string;
+  dataClassification?: 'C1' | 'C2' | 'C3' | 'C4';
+  criticality?: 'diamond' | 'silver' | 'bronze' | 'other';
 };
 
 type User = { id: string; name: string; email: string; role: string; team: string };
@@ -61,6 +64,21 @@ export function EditProjectForm({ project, users }: Props) {
   });
   const [targetCode, setTargetCode] = useState(project.targetCode || '');
   const [engagementYear, setEngagementYear] = useState(project.engagementYear || '');
+  // v2.0 / environmental adjustment
+  const [dataClassification, setDataClassification] = useState<'C1'|'C2'|'C3'|'C4'>(
+    (project.dataClassification as 'C1'|'C2'|'C3'|'C4') || 'C3'
+  );
+  const [criticality, setCriticality] = useState<'diamond'|'silver'|'bronze'|'other'>(
+    (project.criticality as 'diamond'|'silver'|'bronze'|'other') || 'silver'
+  );
+  // Tracks whether either env field has changed from the original — used to
+  // decide whether to ask the server to re-score existing findings.
+  const initialEnv = useRef({
+    dataClassification: (project.dataClassification as 'C1'|'C2'|'C3'|'C4') || 'C3',
+    criticality: (project.criticality as 'diamond'|'silver'|'bronze'|'other') || 'silver',
+  });
+  const envChanged = dataClassification !== initialEnv.current.dataClassification ||
+                     criticality !== initialEnv.current.criticality;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -112,17 +130,59 @@ export function EditProjectForm({ project, users }: Props) {
           members: teamMembers,
           targetCode: targetCode.trim(),
           engagementYear: engagementYear.trim(),
+          dataClassification,
+          criticality,
         }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         setError(d.error || 'Failed to update project');
+        toast.error('Project update failed', { description: d.error || `HTTP ${res.status}` });
         return;
       }
       setSaved(true);
+      toast.success('Project updated');
+
+      // If data classification or criticality changed, re-score every finding
+      // in this project using the new environmental matrix.
+      if (envChanged) {
+        try {
+          const rescoreRes = await fetch(`/api/projects/${project.id}/rescore`, { method: 'POST' });
+          if (rescoreRes.ok) {
+            const data = await rescoreRes.json() as {
+              rescored: number;
+              total: number;
+              skipped: { noVector: number; noChange: number };
+            };
+            const n = Number(data.rescored ?? 0);
+            const skipped = data.skipped ?? { noVector: 0, noChange: 0 };
+            if (n > 0) {
+              toast.success(`Re-scored ${n} of ${data.total} finding${data.total === 1 ? '' : 's'}`, {
+                description: `CVSS adjusted to match the new asset environment.${
+                  skipped.noVector > 0
+                    ? ` ${skipped.noVector} finding${skipped.noVector === 1 ? '' : 's'} had no CVSS vector and weren't touched.`
+                    : ''}`,
+                duration: 6000,
+              });
+            } else if (skipped.noVector > 0 && skipped.noChange === 0) {
+              toast.warn('No findings re-scored', {
+                description: `None of the ${skipped.noVector} finding${skipped.noVector === 1 ? '' : 's'} in this project has a CVSS vector set yet.`,
+              });
+            } else if (skipped.noChange > 0 && n === 0) {
+              toast.info('Environment changed — no scores moved', {
+                description: 'Existing CVSS vectors don\'t intersect with the new matrix (no C/I/A letters needed adjustment).',
+              });
+            }
+          } else {
+            toast.error('Re-score failed', { description: `HTTP ${rescoreRes.status}` });
+          }
+        } catch { /* the project save succeeded — don't block redirect */ }
+      }
+
       setTimeout(() => router.push(`/projects/${project.id}`), 500);
     } catch {
       setError('Network error');
+      toast.error('Network error', { description: 'Project update did not reach the server' });
     } finally {
       setSubmitting(false);
     }
@@ -159,6 +219,65 @@ export function EditProjectForm({ project, users }: Props) {
               ))}
             </select>
           </div>
+
+          {/* Environmental: data classification + asset criticality */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div className="form-group">
+              <label className="form-label">Data Classification</label>
+              <select
+                className="input"
+                value={dataClassification}
+                onChange={e => setDataClassification(e.target.value as 'C1'|'C2'|'C3'|'C4')}
+                style={{ width: '100%' }}
+              >
+                <option value="C1">C1 — Public</option>
+                <option value="C2">C2 — Internal</option>
+                <option value="C3">C3 — Confidential</option>
+                <option value="C4">C4 — Restricted</option>
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.5 }}>
+                {dataClassification === 'C1' && 'Public data — high-confidentiality impact rolls down to low.'}
+                {dataClassification === 'C2' && 'Internal-only — limited contractual sensitivity.'}
+                {dataClassification === 'C3' && 'Confidential — customer / contractual data (default).'}
+                {dataClassification === 'C4' && 'Restricted — regulated data. Low confidentiality impact escalates.'}
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Asset Criticality</label>
+              <select
+                className="input"
+                value={criticality}
+                onChange={e => setCriticality(e.target.value as 'diamond'|'silver'|'bronze'|'other')}
+                style={{ width: '100%' }}
+              >
+                <option value="diamond">Diamond — Tier-0 critical</option>
+                <option value="silver">Silver — Business-critical</option>
+                <option value="bronze">Bronze — Standard</option>
+                <option value="other">Other — Low impact / sandbox</option>
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.5 }}>
+                {criticality === 'diamond' && 'Mission-critical. Even low integrity/availability impact is serious.'}
+                {criticality === 'silver' && 'Important. Outage hurts but is recoverable.'}
+                {criticality === 'bronze' && 'Standard system. High impact rolls down to low.'}
+                {criticality === 'other' && 'Sandbox / test. Minimal real-world consequence.'}
+              </div>
+            </div>
+          </div>
+          {envChanged && (
+            <div style={{
+              fontSize: 11.5, color: 'var(--ink-2)',
+              padding: '10px 12px', background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--accent) 22%, transparent)',
+              borderRadius: 'var(--r-sm)', borderLeft: '3px solid var(--accent)',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <Ico name="info" size={13} style={{ color: 'var(--accent)' }} />
+              <span>
+                Environment changed. When you save, every existing finding in this project will be
+                automatically re-scored against the new data classification / criticality matrix.
+              </span>
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
             <div className="form-group">

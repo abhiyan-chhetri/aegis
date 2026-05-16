@@ -71,9 +71,11 @@ function PaperThumbnail({ status }: { status: string }) {
 function ReportRow({
   report: initialReport,
   onStatusChange,
+  currentUserId,
 }: {
   report: Report;
   onStatusChange: (id: string, update: Partial<Report>) => void;
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [report, setReport] = useState(initialReport);
@@ -185,8 +187,9 @@ function ReportRow({
           </div>
 
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {/* Approve / Reject inline actions for in-review reports */}
-            {report.status === 'in-review' && (
+            {/* Approve / Reject inline actions — ONLY visible to the assigned
+                reviewer. Other users see no buttons (read-only status). */}
+            {report.status === 'in-review' && !!currentUserId && report.reviewerId === currentUserId && (
               <>
                 <button
                   className="btn btn-sm"
@@ -360,9 +363,6 @@ export function ReportsClient({ reports: initialReports, currentUserId }: Props)
     return matchTab && matchSearch;
   });
 
-  // suppress unused var warning
-  void currentUserId;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Tab bar + search */}
@@ -434,7 +434,7 @@ export function ReportsClient({ reports: initialReports, currentUserId }: Props)
             No reports match your filters.
           </div>
         ) : filtered.map(r => (
-          <ReportRow key={r.id} report={r} onStatusChange={handleStatusChange} />
+          <ReportRow key={r.id} report={r} onStatusChange={handleStatusChange} currentUserId={currentUserId} />
         ))}
       </div>
     </div>

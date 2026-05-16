@@ -47,6 +47,9 @@ export async function POST(request: NextRequest) {
     let envContext: { dataClassification?: string; criticality?: string } = {};
     if (context?.projectId) {
       try {
+        // Self-heal: ensure the columns exist before SELECTing them
+        const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+        await ensureEnvColumns().catch(() => { /* keep going */ });
         const rows = await db.$queryRawUnsafe<{ dataClassification: string; criticality: string }[]>(
           `SELECT COALESCE("dataClassification", 'C3') AS "dataClassification",
                   COALESCE("criticality", 'silver') AS "criticality"

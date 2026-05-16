@@ -163,7 +163,21 @@ UNION ALL SELECT 'FindingComment',  COUNT(*)::text FROM "FindingComment"
 UNION ALL SELECT 'AuditLog',        COUNT(*)::text FROM "AuditLog";
 SQL
 
-# ── 5. Suggest the rest of the redeploy flow ────────────────────────────────
+# ── 5. v2.0 backfill: default every project to C3/silver, recompute all CVSS ─
+# Idempotent: existing non-default values are left alone; only NULL / empty
+# columns get the default. Skipped silently if the column already has data.
+banner "Backfilling v2.0 environmental defaults (only where empty)"
+run_sql <<'SQL' || true
+UPDATE "Project"
+   SET "dataClassification" = 'C3'
+ WHERE "dataClassification" IS NULL OR "dataClassification" = '';
+UPDATE "Project"
+   SET "criticality" = 'silver'
+ WHERE "criticality" IS NULL OR "criticality" = '';
+SQL
+success "Backfill complete"
+
+# ── 6. Suggest the rest of the redeploy flow ────────────────────────────────
 banner "🎉 Database is up-to-date. Existing data is untouched."
 echo ""
 echo -e "${BOLD}Now finish the redeploy:${NC}"
@@ -175,4 +189,12 @@ echo -e "  Then restart the app server:"
 echo -e "  ${YELLOW}pm2 restart aegis${NC}          # if using pm2"
 echo -e "  ${YELLOW}docker restart aegis-app${NC}    # if using docker"
 echo -e "  ${YELLOW}systemctl restart aegis${NC}     # if using systemd"
+echo ""
+echo -e "${BOLD}One-time v2.0 step (optional but recommended):${NC}"
+echo -e "  After restart, open each project, click ${YELLOW}Edit${NC}, confirm or change"
+echo -e "  ${YELLOW}Data Classification${NC} and ${YELLOW}Asset Criticality${NC}, then save."
+echo -e "  Existing findings will be automatically re-scored against the new"
+echo -e "  environmental matrix. Until then, all projects default to"
+echo -e "  ${YELLOW}C3 (Confidential) · Silver${NC} — a neutral starting point that doesn't"
+echo -e "  adjust existing CVSS scores."
 echo ""

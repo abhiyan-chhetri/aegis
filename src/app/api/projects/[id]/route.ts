@@ -141,6 +141,8 @@ export async function PATCH(
       startDate, endDate, leadId,
       // Engagement fields
       targetCode, engagementYear,
+      // v2.0 environmental
+      dataClassification, criticality,
     } = body;
 
     // ── Prisma-managed fields (in original schema, no risk) ───────────────────
@@ -173,6 +175,20 @@ export async function PATCH(
       rawUpdates.push({ col: 'targetCode', val: String(targetCode) });
     if (engagementYear !== undefined)
       rawUpdates.push({ col: 'engagementYear', val: String(engagementYear) });
+    if (typeof dataClassification === 'string' && /^C[1-4]$/.test(dataClassification))
+      rawUpdates.push({ col: 'dataClassification', val: dataClassification });
+    if (typeof criticality === 'string' && ['diamond','silver','bronze','other'].includes(criticality))
+      rawUpdates.push({ col: 'criticality', val: criticality });
+
+    // Self-heal the env columns BEFORE the UPDATE references them — avoids
+    // 42703 ("column does not exist") on installs that haven't restarted
+    // the server since the v2.0 schema patch.
+    if (rawUpdates.some(u => u.col === 'dataClassification' || u.col === 'criticality')) {
+      try {
+        const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+        await ensureEnvColumns();
+      } catch { /* fall through — the UPDATE will surface the real error */ }
+    }
 
     // Run everything in parallel
     await Promise.all([
