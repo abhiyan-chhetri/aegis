@@ -1,43 +1,32 @@
 'use client';
 
 /**
- * Lightweight anime.js helpers — only intended for tasteful UI polish.
- * Keep durations short, easings clean, no auto-playing loops on every page.
+ * Lightweight UI-polish helpers.
+ *
+ * CountUp uses a plain requestAnimationFrame loop (no anime.js dependency) so
+ * it's bulletproof regardless of anime.js version drift. Reveal/StaggerList
+ * use anime.js v4 syntax (`ease` not `easing`, `onUpdate` not `update`).
  */
 
 import React, { useEffect, useRef } from 'react';
 import { animate, stagger } from 'animejs';
 
+// ─── Reveal: fade + slide-up on mount ──────────────────────────────────────
 interface RevealProps {
   children: React.ReactNode;
-  /** ms delay before the animation starts */
   delay?: number;
-  /** ms total animation duration */
   duration?: number;
-  /** Y-offset to slide in from (default 12) */
   y?: number;
-  /** When true, animation plays only the first time the component mounts */
   once?: boolean;
   className?: string;
   style?: React.CSSProperties;
   as?: keyof React.JSX.IntrinsicElements;
 }
 
-/**
- * Reveal — fade + slight slide-up on mount. Works for any element.
- * Use sparingly on hero cards, headings, or the first row of a list.
- */
 export function Reveal({
-  children,
-  delay = 0,
-  duration = 540,
-  y = 12,
-  className,
-  style,
-  as: Tag = 'div',
+  children, delay = 0, duration = 540, y = 12, className, style, as: Tag = 'div',
 }: RevealProps) {
   const ref = useRef<HTMLElement | null>(null);
-
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -46,47 +35,31 @@ export function Reveal({
       translateY: [y, 0],
       duration,
       delay,
-      easing: 'easeOutQuad',
+      ease: 'outQuad',
     });
   }, [delay, duration, y]);
 
   return React.createElement(
     Tag as string,
-    {
-      ref,
-      className,
-      style: { opacity: 0, ...style },
-    },
+    { ref, className, style: { opacity: 0, ...style } },
     children,
   );
 }
 
+// ─── StaggerList: fade direct children one after the other ─────────────────
 interface StaggerListProps {
   children: React.ReactNode;
-  /** ms gap between each child's animation start */
   step?: number;
-  /** ms total animation duration per child */
   duration?: number;
-  /** Direct CSS selector for the items to animate (relative to wrapper) */
   itemSelector?: string;
   className?: string;
   style?: React.CSSProperties;
 }
 
-/**
- * StaggerList — animate direct children sequentially with a small delay step.
- * Useful for changelog timelines, finding lists, dashboard cards.
- */
 export function StaggerList({
-  children,
-  step = 70,
-  duration = 460,
-  itemSelector,
-  className,
-  style,
+  children, step = 70, duration = 460, itemSelector, className, style,
 }: StaggerListProps) {
   const ref = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -99,75 +72,73 @@ export function StaggerList({
       translateY: [10, 0],
       duration,
       delay: stagger(step),
-      easing: 'easeOutQuad',
+      ease: 'outQuad',
     });
   }, [step, duration, itemSelector]);
 
-  return (
-    <div ref={ref} className={className} style={style}>
-      {children}
-    </div>
-  );
+  return <div ref={ref} className={className} style={style}>{children}</div>;
 }
 
+// ─── CountUp: pure requestAnimationFrame tween ─────────────────────────────
 interface CountUpProps {
   to: number;
-  /** ms duration */
   duration?: number;
-  /** Suffix (e.g. "%", "+") */
   suffix?: string;
-  /** Decimal places */
   decimals?: number;
-  /** Optional starting value (defaults to 0) */
   from?: number;
   className?: string;
   style?: React.CSSProperties;
 }
 
 /**
- * CountUp — animate a number from 0 (or `from`) up to `to`. Great for stats.
+ * CountUp — animate a number from 0 (or `from`) up to `to`.
+ *
+ * Uses requestAnimationFrame so we don't depend on anime.js for the
+ * number tween — that was the source of the "numbers always show 0" bug
+ * because anime.js v4 renamed the `update` callback to `onUpdate` and
+ * an object-target tween needs the new name to run at all.
  */
 export function CountUp({
-  to,
-  duration = 900,
-  suffix = '',
-  decimals = 0,
-  from = 0,
-  className,
-  style,
+  to, duration = 900, suffix = '', decimals = 0, from = 0, className, style,
 }: CountUpProps) {
   const ref = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const obj = { v: from };
-    animate(obj, {
-      v: to,
-      duration,
-      easing: 'easeOutCubic',
-      update: () => {
-        el.textContent = obj.v.toFixed(decimals) + suffix;
-      },
-    });
+    // If there's nothing to animate (start === end) just write the value.
+    if (to === from) {
+      el.textContent = to.toFixed(decimals) + suffix;
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const range = to - from;
+    // Ease-out cubic for a graceful settle.
+    const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const v = from + range * ease(t);
+      el.textContent = v.toFixed(decimals) + suffix;
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [to, duration, suffix, decimals, from]);
 
   return (
     <span ref={ref} className={className} style={style}>
-      {from.toFixed(decimals)}{suffix}
+      {to.toFixed(decimals)}{suffix}
     </span>
   );
 }
 
-/**
- * usePulse — attach a subtle scale pulse on click for tactile feedback.
- * Returns an onClick wrapper that runs the animation then forwards to handler.
- */
+// ─── usePulse: tactile click feedback ──────────────────────────────────────
 export function usePulse() {
   return (e: React.MouseEvent<HTMLElement>) => {
     animate(e.currentTarget, {
       scale: [{ to: 0.96, duration: 90 }, { to: 1, duration: 180 }],
-      easing: 'easeOutQuad',
+      ease: 'outQuad',
     });
   };
 }

@@ -45,9 +45,11 @@ function timeAgo(iso: string): string {
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 export function InboxClient({ data }: { data: InboxData }) {
   const [tab, setTab] = useState<Tab>('all');
   const [q, setQ] = useState('');
@@ -69,15 +71,42 @@ export function InboxClient({ data }: { data: InboxData }) {
   const showFindings = tab === 'all' || tab === 'findings';
 
   return (
-    <div style={{ maxWidth: 920, display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ maxWidth: 1100, display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--bg-2)', borderRadius: 'var(--r-sm)', alignSelf: 'flex-start' }}>
+      {/* ── HEADER ───────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <h1 className="serif" style={{ margin: 0, fontSize: 30, fontWeight: 400, color: 'var(--ink-0)', lineHeight: 1 }}>
+            {totalCount === 0 ? 'You\'re all caught up.' : `${totalCount} item${totalCount === 1 ? '' : 's'} need${totalCount === 1 ? 's' : ''} your attention`}
+          </h1>
+          <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.55 }}>
+            Mentions in comments, reports waiting on you to review, and findings assigned to you — all in one place.
+          </p>
+        </div>
+
+        {/* Search */}
+        <div style={{ position: 'relative', minWidth: 280 }}>
+          <Ico name="search" size={14} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)' }} />
+          <input
+            className="input"
+            value={q}
+            onChange={e => setQ(e.target.value)}
+            placeholder="Filter by project, finding, sender…"
+            style={{ paddingLeft: 34, height: 36, fontSize: 13, width: '100%' }}
+          />
+        </div>
+      </div>
+
+      {/* ── TABS ─────────────────────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex', gap: 0, borderBottom: '1px solid var(--line-1)',
+        overflowX: 'auto', alignItems: 'stretch',
+      }}>
         {[
-          { key: 'all' as Tab,      label: 'All',        count: totalCount },
-          { key: 'mentions' as Tab, label: 'Mentions',   count: data.mentions.length },
-          { key: 'reviews' as Tab,  label: 'Reviews',    count: data.reviews.length },
-          { key: 'findings' as Tab, label: 'Assigned',   count: data.findings.length },
+          { key: 'all'      as Tab, label: 'All',      icon: 'inbox',   count: totalCount },
+          { key: 'mentions' as Tab, label: 'Mentions', icon: 'message', count: data.mentions.length },
+          { key: 'reviews'  as Tab, label: 'Reviews',  icon: 'reports', count: data.reviews.length },
+          { key: 'findings' as Tab, label: 'Assigned', icon: 'alert',   count: data.findings.length },
         ].map(t => {
           const active = tab === t.key;
           return (
@@ -85,147 +114,98 @@ export function InboxClient({ data }: { data: InboxData }) {
               key={t.key}
               onClick={() => setTab(t.key)}
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '6px 12px', borderRadius: 'var(--r-xs)',
-                background: active ? 'var(--bg-1)' : 'transparent',
-                border: '1px solid', borderColor: active ? 'var(--line-2)' : 'transparent',
-                color: active ? 'var(--ink-0)' : 'var(--ink-2)',
-                fontSize: 12, fontFamily: 'var(--font-sans)', cursor: 'pointer',
-                boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                position: 'relative',
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                padding: '14px 18px',
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: active ? 'var(--ink-0)' : 'var(--ink-3)',
+                fontSize: 13.5, fontWeight: active ? 600 : 500,
+                whiteSpace: 'nowrap',
+                transition: 'color .15s',
               }}
             >
+              <Ico name={t.icon} size={14} />
               {t.label}
-              <span style={{
-                fontSize: 10, fontFamily: 'var(--font-mono)',
-                padding: '0px 6px', borderRadius: 100, minWidth: 18, textAlign: 'center',
-                background: active && t.count > 0 ? 'var(--accent)' : 'var(--bg-3)',
-                color: active && t.count > 0 ? 'var(--accent-ink, #fff)' : 'var(--ink-3)',
-              }}>{t.count}</span>
+              {t.count > 0 && (
+                <span style={{
+                  fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                  padding: '1px 7px', borderRadius: 100, minWidth: 18, textAlign: 'center',
+                  background: active ? 'var(--accent)' : 'var(--bg-3)',
+                  color: active ? 'var(--accent-ink, #fff)' : 'var(--ink-2)',
+                }}>{t.count}</span>
+              )}
+              {/* Active indicator stripe */}
+              {active && (
+                <span style={{
+                  position: 'absolute', left: 0, right: 0, bottom: -1, height: 2,
+                  background: 'var(--accent)', borderRadius: '2px 2px 0 0',
+                }} />
+              )}
             </button>
           );
         })}
       </div>
 
-      {/* Search */}
-      <div style={{ position: 'relative', maxWidth: 460 }}>
-        <Ico name="search" size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)' }} />
-        <input
-          className="input"
-          value={q}
-          onChange={e => setQ(e.target.value)}
-          placeholder="Filter by project, finding, sender…"
-          style={{ paddingLeft: 30, height: 32, fontSize: 12.5, width: '100%' }}
-        />
-      </div>
-
-      {/* Empty state */}
+      {/* ── EMPTY STATE ──────────────────────────────────────────────────── */}
       {totalCount === 0 && (
-        <div style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--ink-3)' }}>
-          <Ico name="inbox" size={32} style={{ display: 'block', margin: '0 auto 14px', opacity: 0.4 }} />
-          <div style={{ fontSize: 14, color: 'var(--ink-2)', marginBottom: 4 }}>Your inbox is empty</div>
-          <div style={{ fontSize: 12 }}>You&rsquo;re all caught up.</div>
+        <div style={{ padding: '80px 20px', textAlign: 'center', color: 'var(--ink-3)' }}>
+          <Ico name="inbox" size={44} style={{ display: 'block', margin: '0 auto 18px', opacity: 0.32 }} />
+          <div style={{ fontSize: 16, color: 'var(--ink-2)', marginBottom: 6 }}>Inbox zero</div>
+          <div style={{ fontSize: 13 }}>Nothing needs your attention right now. Come back later.</div>
         </div>
       )}
 
-      {/* Mentions */}
+      {/* ── MENTIONS ─────────────────────────────────────────────────────── */}
       {showMentions && mentions.length > 0 && (
-        <Section icon="message" title="Mentions" count={mentions.length}>
+        <Section title="Mentions" count={mentions.length} icon="message" accent="var(--accent)" subtitle="Comments where you were @-tagged">
           {mentions.map(m => (
-            <Link
+            <FullRow
               key={m.id}
               href={`/projects/${m.projectId}/findings/${m.findingId}`}
-              style={inboxRowStyle}
-            >
-              <Avatar name={m.author.name} size={32} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)' }}>{m.author.name}</span>
-                  <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>mentioned you</span>
-                  <span style={{ fontSize: 10, color: 'var(--ink-3)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>{timeAgo(m.createdAt)}</span>
-                </div>
-                <div style={{
-                  fontSize: 12.5, color: 'var(--ink-1)', lineHeight: 1.5, marginBottom: 4,
-                  overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
-                }}>
-                  {m.content}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
-                  <span>{m.projectCode}</span>
-                  <span>·</span>
-                  <span style={{ color: 'var(--ink-2)' }}>{m.findingCode}</span>
-                  <span>·</span>
-                  <Sev level={m.findingSeverity as 'critical' | 'high' | 'medium' | 'low' | 'info'} size="sm" />
-                  <span style={{ color: 'var(--ink-2)' }}>{m.findingTitle}</span>
-                </div>
-              </div>
-            </Link>
+              leadingAvatar={m.author.name}
+              title={<><span style={{ fontWeight: 700 }}>{m.author.name}</span> <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>mentioned you</span></>}
+              meta={[m.projectCode, m.findingCode]}
+              severity={m.findingSeverity}
+              timeIso={m.createdAt}
+              body={m.content}
+              context={m.findingTitle}
+            />
           ))}
         </Section>
       )}
 
-      {/* Reviews */}
+      {/* ── REVIEWS ──────────────────────────────────────────────────────── */}
       {showReviews && reviews.length > 0 && (
-        <Section icon="reports" title="Reports awaiting your review" count={reviews.length} accent="rgba(127,179,213,0.6)">
+        <Section title="Reports awaiting your review" count={reviews.length} icon="reports" accent="rgba(127,179,213,1)" subtitle="You're the assigned reviewer">
           {reviews.map(r => (
-            <Link
+            <FullRow
               key={r.id}
               href={r.project ? `/projects/${r.project.id}/report` : '/reports'}
-              style={inboxRowStyle}
-            >
-              <div style={{ width: 32, height: 32, borderRadius: 6, background: 'rgba(127,179,213,0.14)', color: 'rgba(127,179,213,1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Ico name="reports" size={15} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)' }}>
-                    {r.project?.name || 'Report'} <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink-3)', fontWeight: 400 }}>{r.version}</span>
-                  </span>
-                  <span style={{ fontSize: 10, color: 'var(--ink-3)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>{timeAgo(r.createdAt)}</span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--ink-2)', marginBottom: 3 }}>
-                  Submitted for review by <b>{r.author?.name ?? 'unknown'}</b>
-                </div>
-                <div style={{ fontSize: 10.5, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
-                  {r.code} {r.project?.code ? `· ${r.project.code}` : ''}
-                </div>
-              </div>
-              <div style={{
-                padding: '3px 9px', borderRadius: 100, fontSize: 10, fontFamily: 'var(--font-mono)',
-                background: 'rgba(127,179,213,0.14)', color: 'rgba(127,179,213,1)', whiteSpace: 'nowrap',
-              }}>Open to review →</div>
-            </Link>
+              leadingIcon={{ icon: 'reports', color: 'rgba(127,179,213,1)' }}
+              title={<>{r.project?.name || 'Report'} <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontWeight: 400, marginLeft: 6 }}>{r.version}</span></>}
+              meta={[r.code, r.project?.code]}
+              timeIso={r.createdAt}
+              body={r.author?.name ? `Submitted for review by ${r.author.name}` : 'Submitted for review'}
+              cta="Open to review"
+            />
           ))}
         </Section>
       )}
 
-      {/* Findings */}
+      {/* ── FINDINGS ─────────────────────────────────────────────────────── */}
       {showFindings && findings.length > 0 && (
-        <Section icon="alert" title="Findings assigned to you" count={findings.length} accent="rgba(245,165,36,0.5)">
+        <Section title="Findings assigned to you" count={findings.length} icon="alert" accent="rgba(245,165,36,1)" subtitle="Still open">
           {findings.map(f => (
-            <Link
+            <FullRow
               key={f.id}
               href={f.project ? `/projects/${f.project.id}/findings/${f.id}` : '/library'}
-              style={inboxRowStyle}
-            >
-              <div style={{ width: 32, height: 32, borderRadius: 6, background: 'var(--bg-3)', color: 'var(--ink-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Ico name="alert" size={15} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.title}</span>
-                  <span style={{ fontSize: 10, color: 'var(--ink-3)', marginLeft: 'auto', fontFamily: 'var(--font-mono)' }}>{timeAgo(f.createdAt)}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
-                  <Sev level={f.severity as 'critical' | 'high' | 'medium' | 'low' | 'info'} size="sm" />
-                  <span>{f.code}</span>
-                  <span>·</span>
-                  <span>{f.project?.code ?? ''}</span>
-                  {f.cvss > 0 && <><span>·</span><span>CVSS {f.cvss.toFixed(1)}</span></>}
-                  <span>·</span>
-                  <span style={{ color: 'var(--ink-2)' }}>{f.status}</span>
-                </div>
-              </div>
-            </Link>
+              leadingIcon={{ icon: 'alert', color: 'rgba(245,165,36,1)' }}
+              title={f.title}
+              meta={[f.code, f.project?.code, f.cvss > 0 ? `CVSS ${f.cvss.toFixed(1)}` : undefined]}
+              severity={f.severity}
+              status={f.status}
+              timeIso={f.createdAt}
+            />
           ))}
         </Section>
       )}
@@ -233,34 +213,170 @@ export function InboxClient({ data }: { data: InboxData }) {
   );
 }
 
-// ── Sub-components ──────────────────────────────────────────────────────────
-function Section({ icon, title, count, children, accent }: { icon: string; title: string; count: number; children: React.ReactNode; accent?: string }) {
+// ─── Section header ─────────────────────────────────────────────────────────
+function Section({ title, subtitle, count, icon, accent, children }: {
+  title: string; subtitle?: string; count: number; icon: string; accent: string; children: React.ReactNode;
+}) {
   return (
-    <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '12px 16px', borderBottom: '1px solid var(--line-1)',
-        background: accent ? `linear-gradient(90deg, ${accent}1a 0%, transparent 70%)` : 'var(--bg-2)',
+    <section style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <header style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+        paddingLeft: 12, borderLeft: `3px solid ${accent}`,
       }}>
-        <Ico name={icon} size={14} style={{ color: accent || 'var(--ink-2)' }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-0)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        <Ico name={icon} size={15} style={{ color: accent }} />
+        <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: 'var(--ink-0)', letterSpacing: '-0.005em' }}>
           {title}
-        </span>
+        </h2>
         <span style={{
-          fontSize: 10, padding: '1px 7px', borderRadius: 100, fontFamily: 'var(--font-mono)',
-          background: 'var(--bg-3)', color: 'var(--ink-2)',
+          fontSize: 10.5, fontFamily: 'var(--font-mono)', padding: '2px 8px', borderRadius: 100,
+          background: `color-mix(in srgb, ${accent} 14%, transparent)`,
+          color: accent, fontWeight: 700,
         }}>{count}</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {subtitle && (
+          <span style={{ fontSize: 12, color: 'var(--ink-3)', marginLeft: 'auto' }}>
+            {subtitle}
+          </span>
+        )}
+      </header>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {children}
       </div>
-    </div>
+    </section>
   );
 }
 
-const inboxRowStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'flex-start', gap: 12,
-  padding: '12px 16px', borderBottom: '1px solid var(--line-1)',
-  textDecoration: 'none', color: 'inherit',
-  transition: 'background .12s',
-};
+// ─── Single inbox row — wide, prominent, accent-bar on the left ────────────
+function FullRow({
+  href, leadingAvatar, leadingIcon, title, meta, severity, status, timeIso, body, context, cta,
+}: {
+  href: string;
+  leadingAvatar?: string;
+  leadingIcon?: { icon: string; color: string };
+  title: React.ReactNode;
+  meta?: (string | undefined)[];
+  severity?: string;
+  status?: string;
+  timeIso: string;
+  body?: string;
+  context?: string;
+  cta?: string;
+}) {
+  const sevAccent: Record<string, string> = {
+    critical: 'var(--sev-critical)', high: 'var(--sev-high)',
+    medium: 'var(--sev-medium)', low: 'var(--sev-low)', info: 'var(--sev-info)',
+  };
+  const leftAccent = severity ? sevAccent[severity] : (leadingIcon?.color ?? 'var(--accent)');
+
+  return (
+    <Link
+      href={href}
+      style={{
+        display: 'block',
+        padding: '18px 22px 18px 22px',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--line-1)',
+        borderLeft: `3px solid ${leftAccent}`,
+        borderRadius: 'var(--r-md)',
+        color: 'inherit', textDecoration: 'none',
+        transition: 'background .15s, border-color .15s, transform .12s',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.background = 'var(--bg-2)';
+        e.currentTarget.style.borderColor = 'var(--line-2)';
+        e.currentTarget.style.borderLeftColor = leftAccent;
+        e.currentTarget.style.transform = 'translateY(-1px)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.background = 'var(--bg-1)';
+        e.currentTarget.style.borderColor = 'var(--line-1)';
+        e.currentTarget.style.borderLeftColor = leftAccent;
+        e.currentTarget.style.transform = 'translateY(0)';
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+
+        {/* Leading visual: avatar or icon */}
+        {leadingAvatar ? (
+          <div style={{ flexShrink: 0, marginTop: 2 }}>
+            <Avatar name={leadingAvatar} size={36} />
+          </div>
+        ) : leadingIcon ? (
+          <div style={{
+            flexShrink: 0, width: 36, height: 36, borderRadius: 8,
+            background: `color-mix(in srgb, ${leadingIcon.color} 14%, transparent)`,
+            color: leadingIcon.color,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            marginTop: 2,
+          }}>
+            <Ico name={leadingIcon.icon} size={16} />
+          </div>
+        ) : null}
+
+        {/* Main content */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+
+          {/* Title row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 15, color: 'var(--ink-0)', lineHeight: 1.35, flex: 1, minWidth: 0 }}>
+              {title}
+            </div>
+            <span style={{
+              fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)',
+              flexShrink: 0, whiteSpace: 'nowrap',
+            }}>
+              {timeAgo(timeIso)}
+            </span>
+          </div>
+
+          {/* Body (quote, description, etc.) */}
+          {body && (
+            <div style={{
+              fontSize: 13, color: 'var(--ink-1)', lineHeight: 1.55,
+              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const,
+              overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {body}
+            </div>
+          )}
+
+          {/* Context line (e.g. parent finding title) */}
+          {context && (
+            <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.4, fontStyle: 'italic' }}>
+              ↳ {context}
+            </div>
+          )}
+
+          {/* Meta row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5, color: 'var(--ink-3)', flexWrap: 'wrap', marginTop: 2 }}>
+            {severity && <Sev level={severity as 'critical' | 'high' | 'medium' | 'low' | 'info'} size="sm" />}
+            {status && (
+              <span style={{
+                fontSize: 10, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em',
+                padding: '1px 7px', borderRadius: 100, color: 'var(--ink-2)',
+                background: 'var(--bg-3)', border: '1px solid var(--line-1)',
+              }}>
+                {status.replace(/[_-]/g, ' ')}
+              </span>
+            )}
+            {meta?.filter(Boolean).map((m, i) => (
+              <span key={i} style={{ fontFamily: 'var(--font-mono)' }}>
+                {i > 0 && <span style={{ color: 'var(--line-2)', marginRight: 8 }}>·</span>}
+                {m}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* CTA pill (right side) */}
+        {cta && (
+          <div style={{
+            flexShrink: 0, alignSelf: 'center',
+            padding: '6px 12px', borderRadius: 100, fontSize: 11.5, fontFamily: 'var(--font-mono)',
+            background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+            color: 'var(--accent)', whiteSpace: 'nowrap', fontWeight: 600,
+          }}>{cta} →</div>
+        )}
+      </div>
+    </Link>
+  );
+}
