@@ -473,20 +473,32 @@ function IntegrationsTab() {
     }
   }
 
+  const [testError, setTestError] = useState('');
   async function sendTest() {
     if (!webhookUrl.trim()) return;
     setTestStatus('sending');
+    setTestError('');
     try {
-      const res = await fetch(webhookUrl, {
+      // Route through the server so we can tolerate self-signed / internal-CA
+      // certs. The browser would otherwise reject them with a CORS or TLS
+      // error before the request even left the page.
+      const res = await fetch('/api/webhook-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: '✅ Aegis webhook connection successful!' }),
+        body: JSON.stringify({ url: webhookUrl }),
       });
-      setTestStatus(res.ok ? 'success' : 'error');
-      setTimeout(() => setTestStatus('idle'), 3000);
-    } catch {
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) {
+        setTestStatus('success');
+      } else {
+        setTestStatus('error');
+        setTestError(d.error ? String(d.error).slice(0, 200) : `HTTP ${res.status}`);
+      }
+      setTimeout(() => { setTestStatus('idle'); setTestError(''); }, 6000);
+    } catch (err) {
       setTestStatus('error');
-      setTimeout(() => setTestStatus('idle'), 3000);
+      setTestError((err as Error).message || 'Network error');
+      setTimeout(() => { setTestStatus('idle'); setTestError(''); }, 6000);
     }
   }
 
@@ -526,7 +538,9 @@ function IntegrationsTab() {
             <span style={{ fontSize: 12, color: 'var(--status-resolved)' }}>Test message sent!</span>
           )}
           {testStatus === 'error' && (
-            <span style={{ fontSize: 12, color: 'var(--sev-critical)' }}>Test failed — check the URL</span>
+            <span style={{ fontSize: 12, color: 'var(--sev-critical)' }} title={testError}>
+              Test failed{testError ? ` — ${testError.length > 80 ? testError.slice(0, 80) + '…' : testError}` : ' — check the URL'}
+            </span>
           )}
         </div>
       </div>
