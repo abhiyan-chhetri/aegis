@@ -915,6 +915,7 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                   {[
                     ['Code', project.code],
                     ['Engagement', project.engagement],
+                    ['Type', (project as { engagementType?: string }).engagementType === 'internal' ? 'Internal (assumed-breach)' : 'External (perimeter)'],
                     ['Status', project.status.replace(/-/g, ' ')],
                     ['Start date', project.startDate],
                     ['End date', project.endDate],

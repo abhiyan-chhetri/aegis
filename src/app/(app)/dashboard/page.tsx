@@ -118,6 +118,31 @@ export default async function DashboardPage() {
   const openFindings = allFindings.filter((f: any) => f.status !== 'resolved' && f.status !== 'accepted');
   const criticalOpen = openFindings.filter((f: any) => f.severity === 'critical').length;
 
+  // ── SLA breach computation ──────────────────────────────────────────────
+  // For every open finding, compute its deadline against the project's
+  // engagement type. Bucket into overdue / breaching-soon / on-track so we
+  // can surface a focused widget on the dashboard.
+  const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+  await ensureEnvColumns().catch(() => {});
+  const { loadSlaMatrix, computeSla } = await import('@/lib/sla');
+  const projEng = await db.$queryRawUnsafe<{ id: string; engagementType: string }[]>(
+    `SELECT id, COALESCE("engagementType",'external') AS "engagementType" FROM "Project"`,
+  ).catch(() => [] as { id: string; engagementType: string }[]);
+  const engByProject: Record<string, string> = {};
+  for (const r of projEng) engByProject[r.id] = r.engagementType;
+  const slaMatrix = await loadSlaMatrix();
+  const findingProjects: Record<string, { name: string; code: string; id: string }> = {};
+  for (const p of projects) findingProjects[p.id] = { id: p.id, name: p.name, code: p.code };
+  const slaItems = openFindings.map((f: any) => {
+    const eng = engByProject[f.projectId] || 'external';
+    const sla = computeSla(f.severity, f.discovered || (f.createdAt instanceof Date ? f.createdAt.toISOString().slice(0,10) : String(f.createdAt).slice(0,10)), eng, slaMatrix, f.status);
+    return { ...f, sla, project: findingProjects[f.projectId] };
+  });
+  const slaOverdue       = slaItems.filter(i => i.sla.status === 'overdue')
+    .sort((a, b) => a.sla.daysRemaining - b.sla.daysRemaining);
+  const slaBreachingSoon = slaItems.filter(i => i.sla.status === 'breaching_soon')
+    .sort((a, b) => a.sla.daysRemaining - b.sla.daysRemaining);
+
   // ── Finding counts per week, last 12 weeks ────────────────────────────────
   // We do the bucketing entirely in JS using millisecond math, instead of
   // mixing SQL `date_trunc('week', ...)` with local-time `Date` ops. That
@@ -229,6 +254,65 @@ export default async function DashboardPage() {
             icon="reports"
           />
         </div>
+
+        {/* ── SLA breach widget — only shown when something needs attention ── */}
+        {(slaOverdue.length > 0 || slaBreachingSoon.length > 0) && (
+          <section className="card" style={{ overflow: 'hidden', borderLeft: `3px solid ${slaOverdue.length > 0 ? 'var(--sev-critical)' : 'var(--sev-high)'}` }}>
+            <div className="card-header">
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>SLA Tracker</div>
+                <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--ink-0)' }}>
+                  {slaOverdue.length > 0 ? (
+                    <><span style={{ color: 'var(--sev-critical)' }}>{slaOverdue.length}</span> overdue</>
+                  ) : 'On track'}
+                  {slaBreachingSoon.length > 0 && (
+                    <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>
+                      {' '}· <span style={{ color: 'var(--sev-high)' }}>{slaBreachingSoon.length}</span> breaching soon
+                    </span>
+                  )}
+                </div>
+              </div>
+              <Link href="/library?slaFilter=overdue" className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+                View library <Ico name="chevRight" size={11} />
+              </Link>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: 76 }}>ID</th>
+                    <th>Title</th>
+                    <th style={{ width: 100 }}>Project</th>
+                    <th style={{ width: 90 }}>Severity</th>
+                    <th style={{ width: 110 }}>Deadline</th>
+                    <th style={{ width: 110 }}>SLA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...slaOverdue.slice(0, 6), ...slaBreachingSoon.slice(0, 6 - Math.min(6, slaOverdue.length))].map((f: any) => {
+                    const overdue = f.sla.status === 'overdue';
+                    return (
+                      <tr key={f.id}>
+                        <td><Link href={`/projects/${f.projectId}/findings/${f.id}`} className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', textDecoration: 'none' }}>{f.code}</Link></td>
+                        <td><Link href={`/projects/${f.projectId}/findings/${f.id}`} style={{ color: 'var(--ink-0)', textDecoration: 'none' }}>{f.title}</Link></td>
+                        <td><Link href={`/projects/${f.projectId}`} className="mono" style={{ fontSize: 11, color: 'var(--ink-2)', textDecoration: 'none' }}>{f.project?.code || ''}</Link></td>
+                        <td>
+                          <span style={{ fontSize: 11, color: `var(--sev-${f.severity})`, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', fontWeight: 600 }}>{f.severity}</span>
+                        </td>
+                        <td><span className="mono" style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>{f.sla.deadline}</span></td>
+                        <td>
+                          <span className="mono" style={{ fontSize: 11.5, color: overdue ? 'var(--sev-critical)' : 'var(--sev-high)', fontWeight: overdue ? 700 : 500 }}>
+                            {overdue ? `${Math.abs(f.sla.daysRemaining)}d over` : `${f.sla.daysRemaining}d left`}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         {/* ── Main 2-col grid ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 20, alignItems: 'start' }}>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 import { getTeamsWebhookUrl, notifyMention } from '@/lib/notifications';
+import { createNotification, getWatcherIds, resolveMentions } from '@/lib/notify';
 import { v4 as uuidv4 } from 'uuid';
 
 export async function GET(
@@ -47,9 +48,20 @@ export async function POST(
     const session = await getSession();
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { content, mentions } = await request.json();
+    const { content, mentions: clientMentions } = await request.json();
     if (!content?.trim()) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
+    }
+
+    // Trust client-provided mention IDs only if every ID resolves to a real
+    // user; otherwise re-parse the body server-side. Resolves both id-arrays
+    // (from the new editor's combobox) and @handle tokens (from plain text).
+    let mentionIds: string[] = Array.isArray(clientMentions)
+      ? clientMentions.filter((m): m is string => typeof m === 'string')
+      : [];
+    if (mentionIds.length === 0) {
+      const parsed = await resolveMentions(content);
+      mentionIds = parsed.ids;
     }
 
     const id = uuidv4();
@@ -59,7 +71,7 @@ export async function POST(
       `INSERT INTO "FindingComment" (id, "findingId", "userId", content, mentions, "createdAt", "updatedAt")
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       id, findingId, session.id, content.trim(),
-      JSON.stringify(mentions || []), now, now
+      JSON.stringify(mentionIds), now, now
     );
 
     const [row] = await db.$queryRawUnsafe<any[]>(
@@ -106,35 +118,70 @@ export async function POST(
       }
     })();
 
-    // Send Teams notification if there are mentions (best-effort, don't block response)
+    // In-app + Teams notifications (best-effort, don't block response)
     (async () => {
       try {
-        const webhookUrl = await getTeamsWebhookUrl();
-        if (!webhookUrl || !mentions || mentions.length === 0) return;
-
-        const finding = await db.finding.findUnique({ where: { id: findingId }, select: { title: true, projectId: true } });
+        const finding = await db.finding.findUnique({
+          where: { id: findingId },
+          select: { id: true, title: true, code: true, projectId: true },
+        });
         if (!finding) return;
+        const preview = content.substring(0, 160).replace(/\s+/g, ' ').trim();
+        const link = `/projects/${finding.projectId}/findings/${finding.id}`;
 
-        const project = await db.project.findUnique({ where: { id: finding.projectId }, select: { name: true } });
-        if (!project) return;
-
-        const mentionedIds = mentions as string[];
-        const mentionedUsers = await db.user.findMany({ where: { id: { in: mentionedIds } }, select: { id: true, name: true } });
-
-        if (mentionedUsers.length > 0) {
-          await notifyMention({
-            webhookUrl,
-            mentionedUsers,
-            commenterName: session.name || 'Someone',
-            findingTitle: finding.title,
-            projectName: project.name,
-            projectId: finding.projectId,
+        // 1) in-app: every mentioned user
+        for (const uid of mentionIds) {
+          await createNotification({
+            userId: uid,
+            type: 'mention',
+            title: `${session.name || 'Someone'} mentioned you in [${finding.code}]`,
+            body: preview,
+            link,
+            actorId: session.id,
             findingId,
-            commentContent: content,
+            skipSelf: true,
           });
         }
+
+        // 2) in-app: watchers (minus the commenter and any already-mentioned)
+        const watchers = await getWatcherIds(findingId);
+        const exclude = new Set<string>([session.id, ...mentionIds]);
+        for (const uid of watchers) {
+          if (exclude.has(uid)) continue;
+          await createNotification({
+            userId: uid,
+            type: 'watch_comment',
+            title: `New comment on [${finding.code}] ${finding.title}`,
+            body: `${session.name || 'Someone'}: ${preview}`,
+            link,
+            actorId: session.id,
+            findingId,
+          });
+        }
+
+        // 3) Teams webhook for mentions (preserve legacy behaviour)
+        const webhookUrl = await getTeamsWebhookUrl();
+        if (webhookUrl && mentionIds.length > 0) {
+          const project = await db.project.findUnique({ where: { id: finding.projectId }, select: { name: true } });
+          const mentionedUsers = await db.user.findMany({
+            where: { id: { in: mentionIds } },
+            select: { id: true, name: true },
+          });
+          if (project && mentionedUsers.length > 0) {
+            await notifyMention({
+              webhookUrl,
+              mentionedUsers,
+              commenterName: session.name || 'Someone',
+              findingTitle: finding.title,
+              projectName: project.name,
+              projectId: finding.projectId,
+              findingId,
+              commentContent: content,
+            });
+          }
+        }
       } catch (notifyErr) {
-        console.warn('[mention notification skipped]', notifyErr);
+        console.warn('[notification fan-out skipped]', notifyErr);
       }
     })();
 

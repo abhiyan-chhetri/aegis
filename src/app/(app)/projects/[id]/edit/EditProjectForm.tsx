@@ -24,6 +24,7 @@ type Project = {
   engagementYear?: string;
   dataClassification?: 'C1' | 'C2' | 'C3' | 'C4';
   criticality?: 'diamond' | 'silver' | 'bronze' | 'other';
+  engagementType?: 'internal' | 'external';
 };
 
 type User = { id: string; name: string; email: string; role: string; team: string };
@@ -67,6 +68,9 @@ export function EditProjectForm({ project, users }: Props) {
   // v2.0 / environmental adjustment
   const [dataClassification, setDataClassification] = useState<'C1'|'C2'|'C3'|'C4'>(
     (project.dataClassification as 'C1'|'C2'|'C3'|'C4') || 'C3'
+  );
+  const [engagementType, setEngagementType] = useState<'internal'|'external'>(
+    (project.engagementType as 'internal'|'external') || 'external'
   );
   const [criticality, setCriticality] = useState<'diamond'|'silver'|'bronze'|'other'>(
     (project.criticality as 'diamond'|'silver'|'bronze'|'other') || 'silver'
@@ -132,6 +136,7 @@ export function EditProjectForm({ project, users }: Props) {
           engagementYear: engagementYear.trim(),
           dataClassification,
           criticality,
+          engagementType,
         }),
       });
       if (!res.ok) {
@@ -288,6 +293,29 @@ export function EditProjectForm({ project, users }: Props) {
                 {criticality === 'bronze' && 'Standard system. High impact rolls down to low.'}
                 {criticality === 'other' && 'Sandbox / test. Minimal real-world consequence.'}
               </div>
+            </div>
+          </div>
+
+          {/* Engagement type — drives SLA matrix */}
+          <div className="form-group">
+            <label className="form-label">Engagement Type (drives SLA timeline)</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['external','internal'] as const).map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setEngagementType(t)}
+                  className={engagementType === t ? 'btn btn-primary' : 'btn'}
+                  style={{ flex: 1, justifyContent: 'center', textTransform: 'capitalize' }}
+                >
+                  {t === 'external' ? '🌐 External (perimeter)' : '🏢 Internal (assumed-breach)'}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.5 }}>
+              {engagementType === 'external'
+                ? 'Public-facing / perimeter testing — uses the stricter external SLA matrix from Settings.'
+                : 'Assumed-breach / on-network / authenticated — uses the laxer internal SLA matrix from Settings.'}
             </div>
           </div>
           {envChanged && (

@@ -62,7 +62,11 @@ export default async function ProjectPage({ params }: Props) {
       `SELECT "executiveSummary", methodology, "attackNarrative", members, COALESCE(notes, '') as notes FROM "Project" WHERE id = $1`, projectId
     ),
     db.$queryRawUnsafe<any[]>(
-      `SELECT COALESCE("targetCode",'') AS "targetCode", COALESCE("engagementYear",'') AS "engagementYear", "previousEngagementId" FROM "Project" WHERE id = $1`, projectId
+      `SELECT COALESCE("targetCode",'') AS "targetCode",
+              COALESCE("engagementYear",'') AS "engagementYear",
+              COALESCE("engagementType",'external') AS "engagementType",
+              "previousEngagementId"
+       FROM "Project" WHERE id = $1`, projectId
     ),
   ]);
 
@@ -130,6 +134,7 @@ export default async function ProjectPage({ params }: Props) {
     notes:            rawExtra.notes ?? '',
     targetCode:       engExtra.targetCode ?? '',
     engagementYear:   engExtra.engagementYear ?? '',
+    engagementType:   engExtra.engagementType ?? 'external',
     previousEngagementId: engExtra.previousEngagementId ?? null,
   };
 

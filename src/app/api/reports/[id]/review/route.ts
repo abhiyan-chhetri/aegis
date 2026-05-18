@@ -174,7 +174,10 @@ export async function POST(
         `<i>The report has been sent back for revisions.</i>`;
     }
 
-    // Record report version snapshot
+    // Record report version snapshot AND bump the parent Report.version so
+    // the /reports listing stays in sync with the history modal. Previously
+    // only the ReportVersion snapshot was created, leaving Report.version
+    // stuck at "v1" forever.
     if (action !== 'submit') {
       const [latestVer] = await db.$queryRawUnsafe<{ versionNumber: number }[]>(
         `SELECT "versionNumber" FROM "ReportVersion" WHERE "reportId" = $1 ORDER BY "versionNumber" DESC LIMIT 1`, id
@@ -189,6 +192,10 @@ export async function POST(
         comment || '',
         new Date().toISOString()
       );
+      await db.report.update({
+        where: { id },
+        data: { version: `v${nextVer}` },
+      });
     }
 
     // Fire webhook (fire and forget)

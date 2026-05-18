@@ -8,6 +8,12 @@ import { Ico } from '@/components/chrome/icons';
 import { Sev, StatusPill } from '@/components/ui/SevBadge';
 
 type Evidence = { id: string; filename: string; content: string };
+type SlaState = {
+  deadline: string;
+  daysRemaining: number;
+  status: 'ok' | 'breaching_soon' | 'overdue' | 'resolved';
+  budgetDays: number;
+};
 type Finding = {
   id: string;
   code: string;
@@ -25,7 +31,11 @@ type Finding = {
   project: { id: string; name: string; code: string };
   assignee: { id: string; name: string; initials: string } | null;
   evidence?: Evidence[];
+  engagementType?: string;
+  sla?: SlaState;
 };
+
+type User = { id: string; name: string; initials: string };
 
 // Custom markdown renderer that resolves evidence-id image refs and applies
 // per-image dimensions from the alt-text "|WxH" / "|preset" suffix.
@@ -89,6 +99,7 @@ type Project = { id: string; name: string; code: string };
 type Props = {
   findings: Finding[];
   projects: Project[];
+  users?: User[];
 };
 
 const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
@@ -248,15 +259,18 @@ function FindingSlideOver({ item, onClose, onStatusChange }: {
 
 const ITEMS_PER_PAGE = 25;
 
-export function VulnListClient({ findings: initialFindings, projects }: Props) {
+export function VulnListClient({ findings: initialFindings, projects, users = [] }: Props) {
   const [findings, setFindings] = useState(initialFindings);
   const [search, setSearch] = useState('');
   const [sevFilter, setSevFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [projectFilter, setProjectFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
+  const [slaFilter, setSlaFilter] = useState<'all' | 'ok' | 'breaching_soon' | 'overdue' | 'resolved'>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selected, setSelected] = useState<Finding | null>(null);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // Get unique assignees
   const assignees = Array.from(
@@ -279,7 +293,8 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
     const matchStatus = statusFilter === 'all' || f.status === statusFilter;
     const matchProject = projectFilter === 'all' || f.project.id === projectFilter;
     const matchAssignee = assigneeFilter === 'all' || f.assignee?.id === assigneeFilter;
-    return matchSearch && matchSev && matchStatus && matchProject && matchAssignee;
+    const matchSla = slaFilter === 'all' || (f.sla && f.sla.status === slaFilter);
+    return matchSearch && matchSev && matchStatus && matchProject && matchAssignee && matchSla;
   });
 
   // Pagination
@@ -289,11 +304,53 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
   // Reset to page 1 when filters change
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [sevFilter, statusFilter, projectFilter, assigneeFilter, search]);
+  }, [sevFilter, statusFilter, projectFilter, assigneeFilter, slaFilter, search]);
 
   function handleStatusChange(id: string, status: string) {
     setFindings(prev => prev.map(f => f.id === id ? { ...f, status } : f));
     if (selected?.id === id) setSelected(prev => prev ? { ...prev, status } : null);
+  }
+
+  // ── Bulk operations ───────────────────────────────────────────────────────
+  function toggleCheck(id: string) {
+    setChecked(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleCheckAllVisible() {
+    const visibleIds = new Set(filtered.map(f => f.id));
+    const allVisibleChecked = filtered.length > 0 && filtered.every(f => checked.has(f.id));
+    setChecked(prev => {
+      const next = new Set(prev);
+      if (allVisibleChecked) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  }
+  async function applyBulk(data: Record<string, unknown>) {
+    if (checked.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const res = await fetch('/api/findings/bulk', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(checked), data }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(`Bulk update failed: ${d.error || res.statusText}`);
+        return;
+      }
+      setFindings(prev => prev.map(f => checked.has(f.id) ? { ...f, ...data } as Finding : f));
+      setChecked(new Set());
+    } finally {
+      setBulkBusy(false);
+    }
   }
 
   return (
@@ -345,21 +402,103 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
           <option value="all">All assignees</option>
           {assignees.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
-        {(sevFilter !== 'all' || statusFilter !== 'all' || projectFilter !== 'all' || assigneeFilter !== 'all' || search) && (
+        <select className="input" style={{ width: 150 }} value={slaFilter} onChange={e => setSlaFilter(e.target.value as typeof slaFilter)}>
+          <option value="all">All SLA</option>
+          <option value="ok">On track</option>
+          <option value="breaching_soon">Breaching soon</option>
+          <option value="overdue">Overdue</option>
+          <option value="resolved">Resolved</option>
+        </select>
+        {(sevFilter !== 'all' || statusFilter !== 'all' || projectFilter !== 'all' || assigneeFilter !== 'all' || slaFilter !== 'all' || search) && (
           <button
             className="btn btn-ghost btn-sm"
-            onClick={() => { setSearch(''); setSevFilter('all'); setStatusFilter('all'); setProjectFilter('all'); setAssigneeFilter('all'); }}
+            onClick={() => { setSearch(''); setSevFilter('all'); setStatusFilter('all'); setProjectFilter('all'); setAssigneeFilter('all'); setSlaFilter('all'); }}
           >
             <Ico name="x" size={12} /> Clear
           </button>
         )}
       </div>
 
+      {/* Bulk action bar — appears only when something's selected */}
+      {checked.size > 0 && (
+        <div style={{
+          padding: '10px 28px',
+          background: 'rgba(120,160,255,0.07)',
+          borderBottom: '1px solid var(--line-1)',
+          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--ink-1)', fontWeight: 500 }}>
+            {checked.size} selected
+          </span>
+          <span style={{ color: 'var(--ink-4)' }}>·</span>
+          <select
+            className="input"
+            disabled={bulkBusy}
+            style={{ width: 160 }}
+            defaultValue=""
+            onChange={e => { if (e.target.value) { applyBulk({ status: e.target.value }); e.currentTarget.value = ''; } }}
+          >
+            <option value="">Set status…</option>
+            {['open', 'in-progress', 'in-review', 'resolved', 'accepted'].map(s =>
+              <option key={s} value={s}>{s.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</option>
+            )}
+          </select>
+          <select
+            className="input"
+            disabled={bulkBusy}
+            style={{ width: 160 }}
+            defaultValue=""
+            onChange={e => { if (e.target.value) { applyBulk({ severity: e.target.value }); e.currentTarget.value = ''; } }}
+          >
+            <option value="">Set severity…</option>
+            {SEV_ORDER.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+          </select>
+          <select
+            className="input"
+            disabled={bulkBusy || users.length === 0}
+            style={{ width: 180 }}
+            defaultValue=""
+            onChange={e => {
+              if (!e.target.value) return;
+              const val = e.target.value === '__unassign' ? null : e.target.value;
+              applyBulk({ assigneeId: val });
+              e.currentTarget.value = '';
+            }}
+          >
+            <option value="">Assign to…</option>
+            <option value="__unassign">— Unassign —</option>
+            {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={bulkBusy}
+            onClick={() => setChecked(new Set())}
+          >
+            <Ico name="x" size={12} /> Clear selection
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <table className="tbl">
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-0)', zIndex: 10 }}>
             <tr>
+              <th style={{ width: 32 }} onClick={e => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  aria-label="Select all visible"
+                  checked={filtered.length > 0 && filtered.every(f => checked.has(f.id))}
+                  ref={el => {
+                    if (el) {
+                      const someChecked = filtered.some(f => checked.has(f.id));
+                      const allChecked = filtered.length > 0 && filtered.every(f => checked.has(f.id));
+                      el.indeterminate = someChecked && !allChecked;
+                    }
+                  }}
+                  onChange={toggleCheckAllVisible}
+                />
+              </th>
               <th style={{ width: 80 }}>ID</th>
               <th>Title</th>
               <th style={{ width: 130 }}>Project</th>
@@ -367,6 +506,7 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
               <th style={{ width: 60 }}>CVSS</th>
               <th style={{ width: 130 }}>Status</th>
               <th style={{ width: 100 }}>CWE</th>
+              <th style={{ width: 110 }}>SLA</th>
               <th style={{ width: 110 }}>Assignee</th>
               <th style={{ width: 44 }}></th>
             </tr>
@@ -374,13 +514,39 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '60px 0', color: 'var(--ink-3)' }}>
+                <td colSpan={11} style={{ textAlign: 'center', padding: '60px 0', color: 'var(--ink-3)' }}>
                   <Ico name="search" size={24} style={{ display: 'block', margin: '0 auto 12px', opacity: 0.3 }} />
                   No findings match your filters.
                 </td>
               </tr>
-            ) : paginatedFindings.map(f => (
-              <tr key={f.id} onClick={() => setSelected(f)} style={{ cursor: 'pointer' }}>
+            ) : paginatedFindings.map(f => {
+              const slaColor =
+                !f.sla || f.sla.status === 'resolved' ? 'var(--ink-3)' :
+                f.sla.status === 'overdue'         ? 'var(--sev-critical)' :
+                f.sla.status === 'breaching_soon'  ? 'var(--sev-high)' :
+                'var(--status-resolved)';
+              const slaLabel =
+                !f.sla ? '—' :
+                f.sla.status === 'resolved' ? '✓ done' :
+                f.sla.status === 'overdue' ? `${Math.abs(f.sla.daysRemaining)}d over` :
+                `${f.sla.daysRemaining}d left`;
+              return (
+              <tr
+                key={f.id}
+                onClick={() => setSelected(f)}
+                style={{
+                  cursor: 'pointer',
+                  background: checked.has(f.id) ? 'rgba(120,160,255,0.06)' : undefined,
+                }}
+              >
+                <td onClick={e => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${f.code}`}
+                    checked={checked.has(f.id)}
+                    onChange={() => toggleCheck(f.id)}
+                  />
+                </td>
                 <td><span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{f.code}</span></td>
                 <td>
                   <div style={{ fontWeight: 500, color: 'var(--ink-0)', marginBottom: 2 }}>{f.title}</div>
@@ -400,8 +566,22 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
                   ) : <span style={{ color: 'var(--ink-4)' }}>—</span>}
                 </td>
                 <td><StatusPill status={f.status} /></td>
-                <td>
-                  {f.cwe ? <span className="mono" style={{ fontSize: 11, color: 'var(--ink-2)' }}>{f.cwe}</span> : <span style={{ color: 'var(--ink-4)' }}>—</span>}
+                <td onClick={e => e.stopPropagation()}>
+                  {f.cwe ? (
+                    <Link
+                      href={`/cwe/${encodeURIComponent(f.cwe)}`}
+                      className="mono"
+                      style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}
+                      title="Open CWE drilldown"
+                    >
+                      {f.cwe}
+                    </Link>
+                  ) : <span style={{ color: 'var(--ink-4)' }}>—</span>}
+                </td>
+                <td title={f.sla ? `Due ${f.sla.deadline} · ${f.sla.budgetDays}d budget · ${f.engagementType}` : ''}>
+                  <span style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: slaColor, fontWeight: f.sla?.status === 'overdue' ? 700 : 500 }}>
+                    {slaLabel}
+                  </span>
                 </td>
                 <td>
                   {f.assignee ? (
@@ -419,7 +599,7 @@ export function VulnListClient({ findings: initialFindings, projects }: Props) {
                   </Link>
                 </td>
               </tr>
-            ))}
+            );})}
           </tbody>
         </table>
 

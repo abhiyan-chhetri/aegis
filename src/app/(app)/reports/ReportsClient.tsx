@@ -177,7 +177,9 @@ function ReportRow({
           </div>
 
           <div style={{ textAlign: 'right', minWidth: 72 }}>
-            <div style={{ fontSize: 12, color: 'var(--ink-2)' }}>{report.pages}p</div>
+            <div style={{ fontSize: 12, color: report.pages > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>
+              {report.pages > 0 ? `${report.pages}p` : '—'}
+            </div>
             {report.size && <div style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{report.size}</div>}
           </div>
 

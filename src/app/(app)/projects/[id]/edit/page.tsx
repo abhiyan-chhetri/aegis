@@ -28,7 +28,8 @@ export default async function EditProjectPage({params }: Props) {
               COALESCE("targetCode",'') AS "targetCode",
               COALESCE("engagementYear",'') AS "engagementYear",
               COALESCE("dataClassification",'C3') AS "dataClassification",
-              COALESCE("criticality",'silver') AS "criticality"
+              COALESCE("criticality",'silver') AS "criticality",
+              COALESCE("engagementType",'external') AS "engagementType"
        FROM "Project" WHERE id = $1`, id
     ).catch(() =>
       // Old DB without the columns — fall back to the previous shape and
@@ -38,7 +39,7 @@ export default async function EditProjectPage({params }: Props) {
                 COALESCE("targetCode",'') AS "targetCode",
                 COALESCE("engagementYear",'') AS "engagementYear"
          FROM "Project" WHERE id = $1`, id
-      ).then(rows => rows.map(r => ({ ...r, dataClassification: 'C3', criticality: 'silver' })))
+      ).then(rows => rows.map(r => ({ ...r, dataClassification: 'C3', criticality: 'silver', engagementType: 'external' })))
     ),
   ]);
 
@@ -52,6 +53,7 @@ export default async function EditProjectPage({params }: Props) {
     engagementYear: rawExtra.engagementYear ?? '',
     dataClassification: rawExtra.dataClassification ?? 'C3',
     criticality: rawExtra.criticality ?? 'silver',
+    engagementType: rawExtra.engagementType ?? 'external',
   };
 
   return (

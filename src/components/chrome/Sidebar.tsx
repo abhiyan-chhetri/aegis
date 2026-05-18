@@ -10,20 +10,39 @@ type User = { name: string; initials: string; role: string };
 type SidebarProps = { user?: User | null };
 
 const NAV_ITEMS = [
-  { href: '/dashboard',   icon: 'dashboard', label: 'Dashboard' },
-  { href: '/inbox',       icon: 'message',   label: 'Inbox' },
-  { href: '/projects',    icon: 'projects',  label: 'Projects' },
-  { href: '/library',     icon: 'library',   label: 'Vuln List' },
-  { href: '/reports',     icon: 'reports',   label: 'Reports' },
-  { href: '/team',        icon: 'team',      label: 'Team' },
-  { href: '/portfolio',   icon: 'projects',  label: 'Portfolio' },
-  { href: '/insights',    icon: 'chart',     label: 'Insights' },
-  { href: '/audit-trail', icon: 'library',   label: 'Audit Trail' },
-  { href: '/changelog',   icon: 'paper',     label: 'Changelog' },
+  { href: '/dashboard',     icon: 'dashboard', label: 'Dashboard' },
+  { href: '/inbox',         icon: 'message',   label: 'Inbox' },
+  { href: '/notifications', icon: 'bell',      label: 'Notifications' },
+  { href: '/projects',      icon: 'projects',  label: 'Projects' },
+  { href: '/library',       icon: 'library',   label: 'Vuln List' },
+  { href: '/reports',       icon: 'reports',   label: 'Reports' },
+  { href: '/team',          icon: 'team',      label: 'Team' },
+  { href: '/portfolio',     icon: 'projects',  label: 'Portfolio' },
+  { href: '/insights',      icon: 'chart',     label: 'Insights' },
+  { href: '/audit-trail',   icon: 'library',   label: 'Audit Trail' },
+  { href: '/changelog',     icon: 'paper',     label: 'Changelog' },
 ];
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
+  const [unreadCount, setUnreadCount] = React.useState<number>(0);
+
+  // Poll the notifications endpoint for an unread badge. Cheap query
+  // (single COUNT, indexed) — 30s cadence is plenty for in-app pings.
+  React.useEffect(() => {
+    let alive = true;
+    async function load() {
+      try {
+        const r = await fetch('/api/notifications?unread=1&limit=1', { cache: 'no-store' });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (alive) setUnreadCount(d.unreadCount ?? 0);
+      } catch { /* ignore */ }
+    }
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [pathname]);
 
   function isActive(href: string) {
     if (href === '/dashboard') return pathname === '/dashboard';
@@ -47,11 +66,23 @@ export function Sidebar({ user }: SidebarProps) {
       <nav style={styles.nav}>
         {NAV_ITEMS.map(item => {
           const active = isActive(item.href);
+          const showBadge = item.href === '/notifications' && unreadCount > 0;
           return (
             <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
               <div style={{ ...styles.navItem, ...(active ? styles.navItemActive : {}) }}>
                 <Ico name={item.icon} size={16} />
                 <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>
+                {showBadge && (
+                  <span style={{
+                    minWidth: 18, height: 18, padding: '0 5px',
+                    borderRadius: 9, background: 'var(--sev-critical)',
+                    color: 'var(--paper)', fontSize: 10, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: 'var(--font-mono)',
+                  }}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </div>
             </Link>
           );

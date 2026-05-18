@@ -143,6 +143,8 @@ export async function PATCH(
       targetCode, engagementYear,
       // v2.0 environmental
       dataClassification, criticality,
+      // v2.2 SLA — internal vs external engagement
+      engagementType,
     } = body;
 
     // ── Prisma-managed fields (in original schema, no risk) ───────────────────
@@ -179,6 +181,8 @@ export async function PATCH(
       rawUpdates.push({ col: 'dataClassification', val: dataClassification });
     if (typeof criticality === 'string' && ['diamond','silver','bronze','other'].includes(criticality))
       rawUpdates.push({ col: 'criticality', val: criticality });
+    if (typeof engagementType === 'string' && ['internal','external'].includes(engagementType))
+      rawUpdates.push({ col: 'engagementType', val: engagementType });
 
     // Self-heal the env columns BEFORE the UPDATE references them — avoids
     // 42703 ("column does not exist") on installs that haven't restarted

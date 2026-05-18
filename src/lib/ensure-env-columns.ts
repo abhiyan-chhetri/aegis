@@ -30,6 +30,36 @@ export function ensureEnvColumns(): Promise<void> {
       await db.$executeRawUnsafe(
         `ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "cvssLocked" BOOLEAN NOT NULL DEFAULT false`,
       );
+      // v2.2 — engagement type drives SLA matrix
+      await db.$executeRawUnsafe(
+        `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementType" TEXT NOT NULL DEFAULT 'external'`,
+      );
+      // v2.2 — notifications + watcher tables
+      await db.$executeRawUnsafe(
+        `CREATE TABLE IF NOT EXISTS "Notification" (
+          id TEXT PRIMARY KEY,
+          "userId"    TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          type        TEXT NOT NULL,
+          title       TEXT NOT NULL DEFAULT '',
+          body        TEXT NOT NULL DEFAULT '',
+          link        TEXT NOT NULL DEFAULT '',
+          "actorId"   TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          "findingId" TEXT REFERENCES "Finding"(id) ON DELETE CASCADE,
+          read        BOOLEAN NOT NULL DEFAULT false,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+      );
+      await db.$executeRawUnsafe(
+        `CREATE INDEX IF NOT EXISTS "Notification_userId_read_idx" ON "Notification"("userId", read)`,
+      );
+      await db.$executeRawUnsafe(
+        `CREATE TABLE IF NOT EXISTS "FindingWatcher" (
+          "findingId" TEXT NOT NULL REFERENCES "Finding"(id) ON DELETE CASCADE,
+          "userId"    TEXT NOT NULL REFERENCES "User"(id)    ON DELETE CASCADE,
+          "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY ("findingId", "userId")
+        )`,
+      );
     } catch (err) {
       console.warn('[ensureEnvColumns] warning:', (err as Error).message);
       // Reset so the next call retries

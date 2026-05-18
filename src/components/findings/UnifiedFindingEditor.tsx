@@ -343,6 +343,68 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
     Boolean((finding as { cvssLocked?: boolean } | undefined)?.cvssLocked),
   );
 
+  // ── Watch (subscribe to changes on this finding) ────────────────────────
+  // Only meaningful in edit mode (finding has an id); for new findings we
+  // skip the network round-trip entirely.
+  const [watching, setWatching] = useState(false);
+  const [watchCount, setWatchCount] = useState(0);
+  const [watchBusy, setWatchBusy] = useState(false);
+  useEffect(() => {
+    if (!isEditing || !finding?.id) return;
+    let alive = true;
+    fetch(`/api/findings/${finding.id}/watch`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (alive && d) { setWatching(!!d.watching); setWatchCount(d.count || 0); } })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isEditing, finding?.id]);
+  async function toggleWatch() {
+    if (!finding?.id || watchBusy) return;
+    setWatchBusy(true);
+    try {
+      const res = await fetch(`/api/findings/${finding.id}/watch`, {
+        method: watching ? 'DELETE' : 'POST',
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setWatching(!!d.watching);
+        setWatchCount(d.count || 0);
+      }
+    } finally { setWatchBusy(false); }
+  }
+
+  // ── Duplicate-finding detector ──────────────────────────────────────────
+  // For new findings only. Debounced trigram-similarity check against
+  // existing findings via /api/findings/similar.
+  type SimMatch = { id: string; code: string; title: string; severity: string; status: string; cwe: string; project: { id: string; code: string; name: string }; score: number };
+  const [dupMatches, setDupMatches] = useState<SimMatch[]>([]);
+  const [dupDismissed, setDupDismissed] = useState(false);
+  useEffect(() => {
+    if (isEditing) return; // only warn on create
+    if (dupDismissed) return;
+    if (title.trim().length < 6) { setDupMatches([]); return; }
+    const ctrl = new AbortController();
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/findings/similar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            title,
+            description,
+            projectId,
+            excludeId: finding?.id,
+          }),
+        });
+        if (!res.ok) return;
+        const d = await res.json();
+        setDupMatches(d.matches || []);
+      } catch { /* aborted or offline */ }
+    }, 500);
+    return () => { clearTimeout(t); ctrl.abort(); };
+  }, [title, description, projectId, isEditing, dupDismissed, finding?.id]);
+
   const [aiPhase, setAiPhase] = useState<AIPhase>('idle');
   const [aiError, setAiError] = useState('');
   const [annotating, setAnnotating] = useState<string | null>(null); // evidence ID being annotated
@@ -688,6 +750,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
     setError(''); setSaving(true);
     try {
       if(isEditing && finding?.id) {
+        // Optimistic locking: send the updatedAt token we originally loaded.
+        // The server will 409 if someone else has saved since.
+        const expectedUpdatedAt = (finding as { updatedAt?: string | Date | null } | undefined)?.updatedAt;
+        const expectedIso = expectedUpdatedAt instanceof Date ? expectedUpdatedAt.toISOString() :
+                           (typeof expectedUpdatedAt === 'string' ? expectedUpdatedAt : undefined);
         const res = await fetch(`/api/findings/${finding.id}`,{
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
@@ -696,8 +763,16 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             cvss:cvssScore,
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
             cvssLocked,
+            expectedUpdatedAt: expectedIso,
           }),
         });
+        if (res.status === 409) {
+          const d = await res.json().catch(() => ({} as { message?: string }));
+          toast.error('Conflict — somebody else edited this finding', {
+            description: d.message || 'Refresh to see the latest version before saving again.',
+          });
+          return;
+        }
         if (!res.ok) { toast.error('Save failed', { description: `HTTP ${res.status}` }); return; }
         setSaved(true); setTimeout(()=>setSaved(false),2500);
         toast.success('Finding saved', { description: title });
@@ -752,6 +827,28 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           autoFocus
           style={{flex:1,fontSize:18,fontWeight:500,color:'var(--ink-0)',background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}
         />
+        {/* Watch button — only meaningful for existing findings */}
+        {isEditing && finding?.id && (
+          <button
+            type="button"
+            onClick={toggleWatch}
+            disabled={watchBusy}
+            title={watching ? 'Stop watching this finding' : 'Watch this finding for status / severity / comment changes'}
+            className="btn btn-sm"
+            style={{
+              background: watching ? 'rgba(143,201,122,0.18)' : 'transparent',
+              border: `1px solid ${watching ? 'rgba(143,201,122,0.45)' : 'var(--line-2)'}`,
+              color: watching ? 'var(--status-resolved)' : 'var(--ink-2)',
+              fontWeight: 600, gap: 5,
+            }}
+          >
+            <Ico name="eye" size={12} />
+            {watching ? 'Watching' : 'Watch'}
+            {watchCount > 0 && (
+              <span style={{ fontSize: 10, opacity: 0.7, fontFamily: 'var(--font-mono)' }}>· {watchCount}</span>
+            )}
+          </button>
+        )}
         {/* AI Generate split-button — main click fills the whole finding;
             chevron opens a menu to fill only specific sections */}
         <div style={{ position: 'relative', display: 'flex', flexShrink: 0 }}>
@@ -849,6 +946,49 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           )}
         </div>
       </div>
+
+      {/* Duplicate-finding warning — only shown while creating */}
+      {!isEditing && dupMatches.length > 0 && !dupDismissed && (
+        <div style={{
+          padding: '10px 20px',
+          background: 'rgba(255,170,80,0.08)',
+          borderBottom: '1px solid rgba(255,170,80,0.25)',
+          borderLeft: '3px solid var(--sev-high)',
+          fontSize: 12, color: 'var(--ink-1)',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <Ico name="alert" size={13} style={{ color: 'var(--sev-high)' }} />
+            <b style={{ color: 'var(--sev-high)' }}>{dupMatches.length} similar finding{dupMatches.length === 1 ? '' : 's'} already filed</b>
+            <span style={{ color: 'var(--ink-3)' }}>
+              — review before creating a duplicate, or dismiss to continue.
+            </span>
+            <button
+              onClick={() => setDupDismissed(true)}
+              style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', fontSize: 11 }}
+            >Dismiss</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {dupMatches.slice(0, 5).map(m => (
+              <a
+                key={m.id}
+                href={`/projects/${m.project.id}/findings/${m.id}`}
+                target="_blank" rel="noreferrer"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  fontSize: 12, color: 'var(--ink-1)', textDecoration: 'none',
+                  padding: '4px 8px', borderRadius: 'var(--r-sm)', background: 'var(--bg-1)',
+                }}
+              >
+                <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', minWidth: 56 }}>{m.code}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.title}</span>
+                <span style={{ fontSize: 10, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{m.project.code}</span>
+                <span style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', minWidth: 36, textAlign: 'right' }}>{Math.round(m.score * 100)}%</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* AI error banner */}
       {aiError && (

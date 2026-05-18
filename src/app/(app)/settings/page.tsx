@@ -542,45 +542,61 @@ function BrandingTab() {
   const [slaStatus, setSlaStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [loaded, setLoaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [slaCritical, setSlaCritical] = useState('7');
-  const [slaHigh, setSlaHigh] = useState('14');
-  const [slaMedium, setSlaMedium] = useState('30');
-  const [slaLow, setSlaLow] = useState('60');
+  // SLA matrices: separate timelines for external vs internal engagements.
+  // Stored as discrete AppSetting keys (slaExternal_critical, etc.) so the
+  // server-side helper can read them with a single LIKE 'sla%' scan.
+  const [slaExt, setSlaExt] = useState({ critical: '7',  high: '14', medium: '30', low: '60',  info: '90'  });
+  const [slaInt, setSlaInt] = useState({ critical: '14', high: '30', medium: '60', low: '90',  info: '180' });
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
       const logoSetting = d.settings?.logo;
-      const slaSetting = d.settings?.slaSettings;
       const logo = typeof logoSetting === 'string' ? logoSetting : logoSetting?.value;
-      const slaSettings = typeof slaSetting === 'string' ? slaSetting : slaSetting?.value;
       if (logo) setLogoUrl(logo);
-      if (slaSettings) {
-        try {
-          const sla = JSON.parse(slaSettings);
-          if (sla.critical) setSlaCritical(sla.critical.toString());
-          if (sla.high) setSlaHigh(sla.high.toString());
-          if (sla.medium) setSlaMedium(sla.medium.toString());
-          if (sla.low) setSlaLow(sla.low.toString());
-        } catch {}
+
+      // Load new per-engagement-type SLA keys first; fall back to the
+      // legacy `slaSettings` JSON blob if those don't exist (one-time migration).
+      const get = (k: string) => {
+        const raw = d.settings?.[k];
+        return typeof raw === 'string' ? raw : raw?.value;
+      };
+      const nextExt = { ...slaExt };
+      const nextInt = { ...slaInt };
+      for (const sev of ['critical','high','medium','low','info'] as const) {
+        const e = get(`slaExternal_${sev}`);
+        const i = get(`slaInternal_${sev}`);
+        if (e) nextExt[sev] = String(parseInt(e, 10));
+        if (i) nextInt[sev] = String(parseInt(i, 10));
       }
+      const legacy = get('slaSettings');
+      if (legacy && !get('slaExternal_critical')) {
+        try {
+          const j = JSON.parse(legacy);
+          if (j.critical) nextExt.critical = String(j.critical);
+          if (j.high)     nextExt.high     = String(j.high);
+          if (j.medium)   nextExt.medium   = String(j.medium);
+          if (j.low)      nextExt.low      = String(j.low);
+        } catch { /* ignore */ }
+      }
+      setSlaExt(nextExt);
+      setSlaInt(nextInt);
       setLoaded(true);
     }).catch(() => setLoaded(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function saveSlaSettings() {
     setSlaStatus('saving');
+    const payload: Record<string, string> = {};
+    for (const sev of ['critical','high','medium','low','info'] as const) {
+      payload[`slaExternal_${sev}`] = String(parseInt(slaExt[sev], 10) || 0);
+      payload[`slaInternal_${sev}`] = String(parseInt(slaInt[sev], 10) || 0);
+    }
     try {
       const res = await fetch('/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          slaSettings: JSON.stringify({
-            critical: parseInt(slaCritical) || 7,
-            high: parseInt(slaHigh) || 14,
-            medium: parseInt(slaMedium) || 30,
-            low: parseInt(slaLow) || 60,
-          }),
-        }),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setSlaStatus('saved');
@@ -712,57 +728,43 @@ function BrandingTab() {
     </Section>
 
     <Section title="Finding Remediation SLAs">
-      <div className="card" style={{ padding: 24, maxWidth: 600 }}>
+      <div className="card" style={{ padding: 24, maxWidth: 760 }}>
         <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink-0)', marginBottom: 4 }}>Remediation Timeline (Days)</div>
         <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 20, lineHeight: 1.6 }}>
-          Set the expected remediation timeframe for each severity level. These timelines will appear in pentest reports to guide remediation prioritization.
+          Different timelines for <b>external</b> (perimeter / public-facing) vs <b>internal</b>
+          (assumed-breach / on-network) engagements. Each project picks its
+          engagement type on the edit page; findings then inherit the matching
+          deadline based on their severity.
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-          <div className="form-group">
-            <label className="form-label" style={{ color: 'var(--sev-critical)' }}>Critical (days)</label>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              value={slaCritical}
-              onChange={e => setSlaCritical(e.target.value)}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label" style={{ color: 'var(--sev-high)' }}>High (days)</label>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              value={slaHigh}
-              onChange={e => setSlaHigh(e.target.value)}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label" style={{ color: 'var(--sev-medium)' }}>Medium (days)</label>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              value={slaMedium}
-              onChange={e => setSlaMedium(e.target.value)}
-              style={{ width: '100%' }}
-            />
-          </div>
-          <div className="form-group">
-            <label className="form-label" style={{ color: 'var(--sev-low)' }}>Low (days)</label>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              value={slaLow}
-              onChange={e => setSlaLow(e.target.value)}
-              style={{ width: '100%' }}
-            />
-          </div>
+        {/* Two-column grid: external on left, internal on right, one row per severity */}
+        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr 1fr', gap: 12, alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ink-3)' }}>Severity</div>
+          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ink-3)' }}>External (days)</div>
+          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--ink-3)' }}>Internal (days)</div>
+
+          {(['critical','high','medium','low','info'] as const).map(sev => (
+            <React.Fragment key={sev}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: `var(--sev-${sev})` }} />
+                <span style={{ fontSize: 13, color: 'var(--ink-0)', textTransform: 'capitalize' }}>{sev}</span>
+              </div>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                value={slaExt[sev]}
+                onChange={e => setSlaExt({ ...slaExt, [sev]: e.target.value })}
+              />
+              <input
+                className="input"
+                type="number"
+                min="1"
+                value={slaInt[sev]}
+                onChange={e => setSlaInt({ ...slaInt, [sev]: e.target.value })}
+              />
+            </React.Fragment>
+          ))}
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>

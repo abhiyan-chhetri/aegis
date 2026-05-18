@@ -37,9 +37,29 @@ export default async function ReportsPage() {
     : [];
   const rawMap = Object.fromEntries(rawFields.map(r => [r.id, r]));
 
-  // Merge: raw SQL values take precedence over Prisma-returned fields
-  const enrichedAll = reports.map(r => ({
+  // Backfill Report.version from the highest ReportVersion.versionNumber so
+  // the listing matches the history modal. (Historic data was orphaned because
+  // the review endpoint used to only insert a snapshot, never bump the parent.)
+  const maxVers = ids.length > 0
+    ? await db.$queryRawUnsafe<{ reportId: string; max: number }[]>(
+        `SELECT "reportId", MAX("versionNumber")::int AS max
+         FROM "ReportVersion"
+         WHERE "reportId" IN (${ids.map((_: any, i: number) => `$${i + 1}`).join(',')})
+         GROUP BY "reportId"`,
+        ...ids
+      ).catch(() => [] as { reportId: string; max: number }[])
+    : [];
+  const maxVerMap = Object.fromEntries(maxVers.map(r => [r.reportId, `v${r.max}`]));
+
+  // Merge: raw SQL values take precedence over Prisma-returned fields.
+  // NOTE: We used to dedup-by-projectId AND DELETE the "extras" from the DB
+  // here on every page render. That was destroying legitimate version
+  // history (each project can have multiple Report rows — v1, v2, …) and
+  // also turned a GET into a destructive operation. Show everything; let
+  // the user filter / use the per-project version history modal instead.
+  const enriched = reports.map(r => ({
     ...r,
+    version:       maxVerMap[r.id]             ?? r.version ?? 'v1',
     status:        rawMap[r.id]?.status        ?? r.status ?? 'draft',
     reviewComment: rawMap[r.id]?.reviewComment ?? '',
     reviewedAt:    rawMap[r.id]?.reviewedAt    ?? null,
@@ -47,28 +67,12 @@ export default async function ReportsPage() {
     reviewerName:  rawMap[r.id]?.reviewerName  ?? null,
   }));
 
-  // Deduplicate: keep only 1 report per project (latest first)
-  const seen = new Set<string>();
-  const enriched = enrichedAll.filter(r => {
-    if (seen.has(r.projectId)) return false;
-    seen.add(r.projectId);
-    return true;
-  });
-
-  // Clean up any duplicate reports from DB (keep latest, delete the rest)
-  const idsToDelete = enrichedAll
-    .filter(r => !enriched.find(e => e.id === r.id))
-    .map(r => r.id);
-  if (idsToDelete.length > 0) {
-    await db.report.deleteMany({ where: { id: { in: idsToDelete } } });
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <Topbar
         breadcrumb={['Reports']}
         title="Reports"
-        subtitle={`${enriched.length} deliverables`}
+        subtitle={`${enriched.length} deliverable${enriched.length === 1 ? '' : 's'}`}
       />
       <ReportsClient reports={enriched as any} currentUserId={session?.id ?? ''} />
     </div>

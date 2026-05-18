@@ -58,6 +58,30 @@ export async function register() {
       `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "criticality"        TEXT NOT NULL DEFAULT 'silver'`,
       // v2.1 / force-lock CVSS — skip env adjustment per-finding when set
       `ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "cvssLocked" BOOLEAN NOT NULL DEFAULT false`,
+      // v2.2 / SLA tracking — projects are internal or external (different SLAs)
+      `ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementType" TEXT NOT NULL DEFAULT 'external'`,
+      // v2.2 / @mention + watcher notifications
+      `CREATE TABLE IF NOT EXISTS "Notification" (
+        id TEXT PRIMARY KEY,
+        "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL DEFAULT '',
+        link TEXT NOT NULL DEFAULT '',
+        "actorId" TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+        "findingId" TEXT REFERENCES "Finding"(id) ON DELETE CASCADE,
+        read BOOLEAN NOT NULL DEFAULT false,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE INDEX IF NOT EXISTS "Notification_userId_read_idx" ON "Notification"("userId", read)`,
+      `CREATE INDEX IF NOT EXISTS "Notification_createdAt_idx" ON "Notification"("createdAt")`,
+      // v2.2 / finding watchers — subscribe to status / severity / comment events
+      `CREATE TABLE IF NOT EXISTS "FindingWatcher" (
+        "findingId" TEXT NOT NULL REFERENCES "Finding"(id) ON DELETE CASCADE,
+        "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY ("findingId", "userId")
+      )`,
     ];
 
     for (const sql of migrations) {

@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { sendWebhook } from '@/lib/webhook';
 import { broadcast } from '@/lib/broadcaster';
 import { v4 as uuidv4 } from 'uuid';
+import { notifyMany, getWatcherIds } from '@/lib/notify';
 
 export async function GET(
   _request: NextRequest,
@@ -65,6 +66,23 @@ export async function PATCH(
     if (!currentFinding) {
       return NextResponse.json({ error: 'Finding not found' }, { status: 404 });
     }
+
+    // Optimistic locking: if the client supplied `expectedUpdatedAt` (the
+    // updatedAt token they originally loaded), reject the write when it no
+    // longer matches the row in the DB — somebody else has edited since.
+    // Clients that omit the token continue to work for backwards compat.
+    if (typeof body.expectedUpdatedAt === 'string' && body.expectedUpdatedAt) {
+      const dbToken = currentFinding.updatedAt.toISOString();
+      if (dbToken !== body.expectedUpdatedAt) {
+        return NextResponse.json({
+          error: 'conflict',
+          message: 'This finding has been modified by another user since you loaded it. Refresh to see the latest version.',
+          currentUpdatedAt: dbToken,
+        }, { status: 409 });
+      }
+    }
+    // Strip the locking token from the body so it doesn't leak into updateData
+    delete body.expectedUpdatedAt;
 
     const allowedFields = [
       'title', 'severity', 'status', 'summary', 'description',
@@ -279,6 +297,46 @@ export async function PATCH(
       } catch (reportErr) {
         console.warn('[report revert skipped]', reportErr);
       }
+    }
+
+    // ── Notify watchers about relevant changes ────────────────────────────────
+    // Watchers explicitly subscribed to this finding get an in-app
+    // notification when status, severity or assignee moves. We skip noisy
+    // body-only edits (description, remediation, etc.).
+    try {
+      const interestingChanges = changes.filter(c =>
+        c === 'status' || c === 'severity' || c === 'assigneeId'
+      );
+      if (interestingChanges.length > 0) {
+        const watchers = await getWatcherIds(id);
+        if (watchers.length > 0) {
+          const detailParts: string[] = [];
+          let notifType: 'watch_status' | 'watch_severity' | 'watch_assigned' = 'watch_status';
+          if (interestingChanges.includes('status')) {
+            detailParts.push(`status: ${currentFinding.status} → ${updateData.status}`);
+            notifType = 'watch_status';
+          }
+          if (interestingChanges.includes('severity')) {
+            detailParts.push(`severity: ${currentFinding.severity} → ${updateData.severity}`);
+            notifType = 'watch_severity';
+          }
+          if (interestingChanges.includes('assigneeId')) {
+            detailParts.push('assignee changed');
+            notifType = 'watch_assigned';
+          }
+          await notifyMany(watchers, {
+            type: notifType,
+            title: `[${finding.code}] ${finding.title}`,
+            body: detailParts.join(' · '),
+            link: `/projects/${currentFinding.projectId}/findings/${id}`,
+            actorId: session.id,
+            findingId: id,
+            skipSelf: true,
+          });
+        }
+      }
+    } catch (notErr) {
+      console.warn('[watcher notify skipped]', notErr);
     }
 
     // ── Broadcast finding change to SSE subscribers ───────────────────────────
