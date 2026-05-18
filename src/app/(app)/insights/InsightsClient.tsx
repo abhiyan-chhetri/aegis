@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
+import Link from 'next/link';
 import { Ico } from '@/components/chrome/icons';
 import { Sev } from '@/components/ui/SevBadge';
 
@@ -178,18 +179,31 @@ export function InsightsClient({ cwe, owasp, totalFindings, taggedCwe, taggedOwa
         ) : topN.map((row, i) => {
           const pct = (row.count / maxCount) * 100;
           const sevMixTotal = SEV_ORDER.reduce((a, s) => a + row[s], 0);
+          // For CWE rows, drilldown to /cwe/[code]; OWASP has no equivalent page.
+          const clickable = tab === 'cwe' && /^CWE-\d+/i.test(row.key);
+          const RowEl: React.ElementType = clickable ? Link : 'div';
+          const rowProps = clickable
+            ? { href: `/cwe/${encodeURIComponent(row.key)}` as const, title: `Open drilldown for ${row.key}` }
+            : {};
           return (
-            <div key={row.key} style={{
+            <RowEl key={row.key} {...rowProps} style={{
               display: 'grid', gridTemplateColumns: '40px 1fr 70px 1fr 110px',
               alignItems: 'center', padding: '10px 16px',
               borderBottom: i < topN.length - 1 ? '1px solid var(--line-1)' : 'none',
               fontSize: 12.5, color: 'var(--ink-1)',
-            }}>
+              textDecoration: 'none',
+              cursor: clickable ? 'pointer' : 'default',
+              transition: 'background 0.1s',
+            }}
+            onMouseEnter={clickable ? (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = 'var(--bg-2)'; } : undefined}
+            onMouseLeave={clickable ? (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = ''; } : undefined}
+            >
               <span style={{ color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
                 {String(i + 1).padStart(2, '0')}
               </span>
-              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink-0)', fontWeight: 600 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', color: clickable ? 'var(--accent)' : 'var(--ink-0)', fontWeight: 600 }}>
                 {row.key}
+                {clickable && <Ico name="chevRight" size={11} style={{ marginLeft: 6, verticalAlign: 'middle', opacity: 0.7 }} />}
               </span>
               <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--ink-0)' }}>
                 {row.count}
@@ -218,7 +232,7 @@ export function InsightsClient({ cwe, owasp, totalFindings, taggedCwe, taggedOwa
                   );
                 })}
               </span>
-            </div>
+            </RowEl>
           );
         })}
         {/* Footer: total + summary */}

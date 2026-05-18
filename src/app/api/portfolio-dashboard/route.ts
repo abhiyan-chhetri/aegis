@@ -36,17 +36,30 @@ export async function GET(_request: NextRequest) {
       },
     });
 
-    // Findings with assetOwner + project endDate for asset owner stats
+    // Findings with assetOwner + project endDate + SLA inputs for owner/assignee stats
+    // engagementType is read with COALESCE so this still works pre-migration.
+    try {
+      const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
+      await ensureEnvColumns().catch(() => {});
+    } catch { /* ignore */ }
     const findingsForOwners = await db.$queryRawUnsafe<{
       id: string; severity: string; status: string; projectId: string;
       assetOwner: string; projectEndDate: string; projectAssetOwners: string;
+      assigneeId: string | null; assigneeName: string | null;
+      discovered: string;
+      engagementType: string;
     }[]>(`
       SELECT f.id, f.severity, f.status, f."projectId",
              COALESCE(f."assetOwner", '') AS "assetOwner",
              p."endDate" AS "projectEndDate",
-             COALESCE(p."assetOwners", '[]') AS "projectAssetOwners"
+             COALESCE(p."assetOwners", '[]') AS "projectAssetOwners",
+             f."assigneeId",
+             u.name AS "assigneeName",
+             COALESCE(f.discovered, to_char(f."createdAt", 'YYYY-MM-DD')) AS "discovered",
+             COALESCE(p."engagementType", 'external') AS "engagementType"
       FROM "Finding" f
       JOIN "Project" p ON p.id = f."projectId"
+      LEFT JOIN "User" u ON u.id = f."assigneeId"
     `);
 
     // ── Global severity + status distribution ─────────────────────────────────
@@ -244,17 +257,69 @@ export async function GET(_request: NextRequest) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
+    // ── SLA stats (overdue + breaching soon) ──────────────────────────────────
+    // Drives the portfolio SLA strip + the per-owner / per-assignee overdue
+    // leaderboards. Computation uses the same matrix as the library + dashboard
+    // breach widget so numbers stay consistent across pages.
+    const { loadSlaMatrix, computeSla } = await import('@/lib/sla');
+    const slaMatrix = await loadSlaMatrix();
+    const slaByFinding: Record<string, { status: string; daysRemaining: number; deadline: string; budgetDays: number }> = {};
+    let slaOverdueCount = 0;
+    let slaBreachingSoonCount = 0;
+    let slaOnTrackCount = 0;
+    let slaResolvedCount = 0;
+    const overdueBySeverity: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    const breachingByEngagement: Record<string, { overdue: number; breaching: number; total: number }> = {
+      internal: { overdue: 0, breaching: 0, total: 0 },
+      external: { overdue: 0, breaching: 0, total: 0 },
+    };
+    for (const f of findingsForOwners) {
+      const sla = computeSla(f.severity, f.discovered, f.engagementType, slaMatrix, f.status);
+      slaByFinding[f.id] = sla;
+      if (sla.status === 'overdue') slaOverdueCount++;
+      else if (sla.status === 'breaching_soon') slaBreachingSoonCount++;
+      else if (sla.status === 'resolved') slaResolvedCount++;
+      else slaOnTrackCount++;
+      if (sla.status === 'overdue') {
+        if (f.severity in overdueBySeverity) overdueBySeverity[f.severity]++;
+      }
+      const eng = f.engagementType === 'internal' ? 'internal' : 'external';
+      breachingByEngagement[eng].total++;
+      if (sla.status === 'overdue') breachingByEngagement[eng].overdue++;
+      if (sla.status === 'breaching_soon') breachingByEngagement[eng].breaching++;
+    }
+
+    // ── Top overdue assignees (who's behind?) ──────────────────────────────
+    const assigneeOverdue: Record<string, { id: string; name: string; overdue: number; breaching: number; totalOpen: number }> = {};
+    for (const f of findingsForOwners) {
+      const sla = slaByFinding[f.id];
+      if (!sla) continue;
+      const isOpen = sla.status !== 'resolved';
+      const aid = f.assigneeId || '__unassigned';
+      const aname = f.assigneeName || (aid === '__unassigned' ? 'Unassigned' : 'Unknown');
+      if (!assigneeOverdue[aid]) assigneeOverdue[aid] = { id: aid, name: aname, overdue: 0, breaching: 0, totalOpen: 0 };
+      const e = assigneeOverdue[aid];
+      if (isOpen) e.totalOpen++;
+      if (sla.status === 'overdue') e.overdue++;
+      if (sla.status === 'breaching_soon') e.breaching++;
+    }
+    const overdueByAssignee = Object.values(assigneeOverdue)
+      .filter(a => a.overdue > 0 || a.breaching > 0)
+      .sort((a, b) => b.overdue - a.overdue || b.breaching - a.breaching)
+      .slice(0, 10);
+
     // ── Asset Owner stats ─────────────────────────────────────────────────────
     // Attribution: finding.assetOwner if set, else project.assetOwners[0], else "Unattributed"
-    const today = new Date().toISOString().split('T')[0];
+    // `overdue` is now SLA-driven (severity + engagementType deadline) rather
+    // than the old "project end date passed" heuristic — much more meaningful.
     const ownerStats: Record<string, {
       name: string; total: number; unresolved: number;
-      critHighOpen: number; overdue: number; projectIds: Set<string>;
+      critHighOpen: number; overdue: number; breaching: number; projectIds: Set<string>;
     }> = {};
 
     function ensureOwner(name: string) {
       if (!ownerStats[name]) {
-        ownerStats[name] = { name, total: 0, unresolved: 0, critHighOpen: 0, overdue: 0, projectIds: new Set() };
+        ownerStats[name] = { name, total: 0, unresolved: 0, critHighOpen: 0, overdue: 0, breaching: 0, projectIds: new Set() };
       }
     }
 
@@ -275,18 +340,29 @@ export async function GET(_request: NextRequest) {
       o.total++;
       o.projectIds.add(f.projectId);
       const isUnresolved = f.status !== 'resolved' && f.status !== 'accepted';
+      const sla = slaByFinding[f.id];
       if (isUnresolved) {
         o.unresolved++;
         const isCritHigh = f.severity === 'critical' || f.severity === 'high';
         if (isCritHigh) o.critHighOpen++;
-        // Overdue: project end date passed and finding still open
-        if (f.projectEndDate && f.projectEndDate < today) o.overdue++;
+        if (sla?.status === 'overdue') o.overdue++;
+        if (sla?.status === 'breaching_soon') o.breaching++;
       }
     }
 
     const assetOwnerStats = Object.values(ownerStats)
       .map(o => ({ ...o, projectCount: o.projectIds.size, projectIds: Array.from(o.projectIds) }))
-      .sort((a, b) => b.unresolved - a.unresolved || b.critHighOpen - a.critHighOpen);
+      .sort((a, b) => b.overdue - a.overdue || b.unresolved - a.unresolved || b.critHighOpen - a.critHighOpen);
+
+    // Per-project overdue rollup so the projects table can show a column
+    const overdueByProject: Record<string, { overdue: number; breaching: number }> = {};
+    for (const f of findingsForOwners) {
+      const sla = slaByFinding[f.id];
+      if (!sla) continue;
+      if (!overdueByProject[f.projectId]) overdueByProject[f.projectId] = { overdue: 0, breaching: 0 };
+      if (sla.status === 'overdue') overdueByProject[f.projectId].overdue++;
+      if (sla.status === 'breaching_soon') overdueByProject[f.projectId].breaching++;
+    }
 
     return NextResponse.json({
       summary: {
@@ -307,11 +383,25 @@ export async function GET(_request: NextRequest) {
         severityDistribution: severityCounts,
         statusDistribution: statusCounts,
       },
-      projects: projectRows,
+      projects: projectRows.map((p: { projectId: string; [k: string]: unknown }) => ({
+        ...p,
+        slaOverdue: overdueByProject[p.projectId]?.overdue ?? 0,
+        slaBreachingSoon: overdueByProject[p.projectId]?.breaching ?? 0,
+      })),
       teamWorkload,
       trends: trendRows,
       monthlyTrend,
       assetOwnerStats,
+      sla: {
+        overdue: slaOverdueCount,
+        breachingSoon: slaBreachingSoonCount,
+        onTrack: slaOnTrackCount,
+        resolved: slaResolvedCount,
+        totalOpen: slaOverdueCount + slaBreachingSoonCount + slaOnTrackCount,
+        overdueBySeverity,
+        byEngagement: breachingByEngagement,
+      },
+      overdueByAssignee,
     });
   } catch (error) {
     console.error('[GET /api/portfolio-dashboard]', error);

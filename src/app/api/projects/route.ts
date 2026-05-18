@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, code, engagement, scope, members, assetOwners, startDate, endDate, leadId,
             targetCode, engagementYear, previousEngagementId,
-            dataClassification, criticality } = body;
+            dataClassification, criticality, engagementType } = body;
 
     if (!name || !code || !engagement || !startDate || !endDate || !leadId) {
       return NextResponse.json(
@@ -95,14 +95,15 @@ export async function POST(request: NextRequest) {
     const assetOwnersJson = Array.isArray(assetOwners) ? JSON.stringify(assetOwners) : (assetOwners ?? '[]');
     await db.$executeRawUnsafe(
       `UPDATE "Project" SET members = $1, "assetOwners" = $2, "targetCode" = $3, "engagementYear" = $4, "previousEngagementId" = $5,
-              "dataClassification" = $6, "criticality" = $7
-       WHERE id = $8`,
+              "dataClassification" = $6, "criticality" = $7, "engagementType" = $8
+       WHERE id = $9`,
       membersJson, assetOwnersJson,
       targetCode || code,
       engagementYear || '',
       previousEngagementId || null,
       (typeof dataClassification === 'string' && /^C[1-4]$/.test(dataClassification)) ? dataClassification : 'C3',
       (typeof criticality === 'string' && ['diamond','silver','bronze','other'].includes(criticality)) ? criticality : 'silver',
+      (typeof engagementType === 'string' && ['internal','external'].includes(engagementType)) ? engagementType : 'external',
       project.id
     );
 

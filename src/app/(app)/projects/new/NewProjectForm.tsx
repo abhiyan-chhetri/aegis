@@ -182,6 +182,7 @@ export function NewProjectForm({ users, existingOwners }: Props) {
   // v2.0 / Environmental: drives CVSS adjustment + AI prompt context
   const [dataClassification, setDataClassification] = useState<'C1'|'C2'|'C3'|'C4'>('C3');
   const [criticality, setCriticality] = useState<'diamond'|'silver'|'bronze'|'other'>('silver');
+  const [engagementType, setEngagementType] = useState<'internal'|'external'>('external');
 
   useEffect(() => {
     fetch('/api/settings').then(r => r.json()).then(d => {
@@ -217,7 +218,7 @@ export function NewProjectForm({ users, existingOwners }: Props) {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners, targetCode, engagementYear, previousEngagementId, dataClassification, criticality }),
+        body: JSON.stringify({ name, code, engagement, startDate, endDate, leadId, members: teamMembers, assetOwners, targetCode, engagementYear, previousEngagementId, dataClassification, criticality, engagementType }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -393,6 +394,29 @@ export function NewProjectForm({ users, existingOwners }: Props) {
         the AI prompt with concrete impact context — so &ldquo;HIGH confidentiality&rdquo; on a public
         C1 asset is auto-rolled down to &ldquo;low&rdquo;, and &ldquo;LOW integrity&rdquo; on a Diamond asset
         is auto-escalated.
+      </div>
+
+      {/* Engagement type — drives SLA matrix */}
+      <div className="form-group" style={{ marginBottom: 20 }}>
+        <label className="form-label">Engagement Type * (drives SLA timeline)</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {(['external','internal'] as const).map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setEngagementType(t)}
+              className={engagementType === t ? 'btn btn-primary' : 'btn'}
+              style={{ flex: 1, justifyContent: 'center' }}
+            >
+              {t === 'external' ? '🌐 External (perimeter)' : '🏢 Internal (assumed-breach)'}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.5 }}>
+          {engagementType === 'external'
+            ? 'Public-facing / perimeter testing — uses the stricter external SLA matrix from Settings.'
+            : 'Assumed-breach / on-network / authenticated — uses the laxer internal SLA matrix from Settings.'}
+        </div>
       </div>
 
       {/* Dates */}

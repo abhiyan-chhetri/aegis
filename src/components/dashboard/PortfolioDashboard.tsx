@@ -42,6 +42,19 @@ interface AssetOwnerStat {
   projectCount: number;
 }
 
+interface SlaSummary {
+  overdue: number;
+  breachingSoon: number;
+  onTrack: number;
+  resolved: number;
+  totalOpen: number;
+  overdueBySeverity: Record<string, number>;
+  byEngagement: Record<'internal' | 'external', { overdue: number; breaching: number; total: number }>;
+}
+interface AssigneeOverdueRow {
+  id: string; name: string; overdue: number; breaching: number; totalOpen: number;
+}
+
 interface DashboardData {
   summary: {
     totalProjects: number;
@@ -61,10 +74,12 @@ interface DashboardData {
     severityDistribution: Record<string, number>;
     statusDistribution: Record<string, number>;
   };
-  projects: ProjectRow[];
+  projects: (ProjectRow & { slaOverdue?: number; slaBreachingSoon?: number })[];
   teamWorkload: WorkloadEntry[];
   monthlyTrend: MonthlyPoint[];
-  assetOwnerStats: AssetOwnerStat[];
+  assetOwnerStats: (AssetOwnerStat & { breaching?: number })[];
+  sla?: SlaSummary;
+  overdueByAssignee?: AssigneeOverdueRow[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -140,6 +155,18 @@ function Delta({ current, prev, invertColor }: { current: number; prev: number; 
 }
 
 // ── KPI tile ──────────────────────────────────────────────────────────────────
+
+function SlaTile({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{ background: 'var(--bg-0)', padding: '16px 18px' }}>
+      <div className="eyebrow" style={{ marginBottom: 6, fontSize: 9 }}>{label}</div>
+      <div style={{
+        fontSize: 28, fontWeight: 700, fontFamily: 'var(--font-mono)',
+        color, lineHeight: 1, letterSpacing: '-0.03em',
+      }}>{value}</div>
+    </div>
+  );
+}
 
 function KpiTile({
   label, value, sub, color = 'var(--ink-0)', isText = false, ring, delta,
@@ -281,7 +308,7 @@ export function PortfolioDashboard() {
 
   if (!data) return null;
 
-  const { summary, projects, teamWorkload, monthlyTrend, assetOwnerStats = [] } = data;
+  const { summary, projects, teamWorkload, monthlyTrend, assetOwnerStats = [], sla, overdueByAssignee = [] } = data;
   const dist = summary.severityDistribution;
   const statusDist = summary.statusDistribution;
   const totalF = summary.totalFindings || 1;
@@ -466,13 +493,133 @@ export function PortfolioDashboard() {
         </div>
       </div>
 
+      {/* ── SLA Overview ── */}
+      {sla && sla.totalOpen > 0 && (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 2 }}>SLA Tracker</div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                Severity × engagement-type deadlines from <Link href="/settings" style={{ color: 'var(--accent)' }}>Settings → SLAs</Link>. Resolved findings are excluded from open totals.
+              </div>
+            </div>
+            <Link href="/library?slaFilter=overdue" className="btn btn-ghost btn-sm" style={{ fontSize: 11 }}>
+              View overdue in library <Ico name="chevRight" size={11} />
+            </Link>
+          </div>
+
+          {/* Four-cell summary strip */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--line-1)' }}>
+            <SlaTile label="Overdue"        value={sla.overdue}        color="var(--sev-critical)" />
+            <SlaTile label="Breaching soon" value={sla.breachingSoon}  color="var(--sev-high)" />
+            <SlaTile label="On track"       value={sla.onTrack}        color="var(--status-resolved)" />
+            <SlaTile label="Resolved"       value={sla.resolved}       color="var(--ink-2)" />
+          </div>
+
+          {/* Severity + engagement-type breakdown */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 1, background: 'var(--line-1)' }}>
+            <div style={{ padding: '14px 18px', background: 'var(--bg-1)' }}>
+              <div className="eyebrow" style={{ marginBottom: 10 }}>Overdue by severity</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {SEV_ORDER.map(s => {
+                  const n = sla.overdueBySeverity[s] || 0;
+                  const max = Math.max(1, ...Object.values(sla.overdueBySeverity));
+                  return (
+                    <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ width: 64, fontSize: 11, fontFamily: 'var(--font-mono)', color: SEV_COLORS[s], textTransform: 'uppercase', letterSpacing: '0.06em' }}>{s}</span>
+                      <div style={{ flex: 1, height: 6, background: 'var(--bg-3)', borderRadius: 100, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${(n / max) * 100}%`, background: SEV_COLORS[s], borderRadius: 100 }} />
+                      </div>
+                      <span style={{ width: 32, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12, color: n > 0 ? SEV_COLORS[s] : 'var(--ink-3)', fontWeight: 600 }}>{n}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ padding: '14px 18px', background: 'var(--bg-1)' }}>
+              <div className="eyebrow" style={{ marginBottom: 10 }}>By engagement type</div>
+              {(['external','internal'] as const).map(eng => {
+                const b = sla.byEngagement[eng];
+                if (!b) return null;
+                return (
+                  <div key={eng} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                    <span style={{ width: 70, fontSize: 12, color: 'var(--ink-1)', textTransform: 'capitalize' }}>
+                      {eng === 'external' ? '🌐 External' : '🏢 Internal'}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--sev-critical)', fontFamily: 'var(--font-mono)', fontWeight: 700, minWidth: 56 }}>
+                      {b.overdue} overdue
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--sev-high)', fontFamily: 'var(--font-mono)', minWidth: 70 }}>
+                      {b.breaching} breaching
+                    </span>
+                    <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-3)' }}>{b.total} total findings</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Overdue by assignee (who's behind?) ── */}
+      {overdueByAssignee.length > 0 && (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)' }}>
+            <div className="eyebrow" style={{ marginBottom: 2 }}>Overdue by assignee</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+              Owners with the most overdue findings — sorted by overdue count, then breaching-soon.
+            </div>
+          </div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Assignee</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Overdue</th>
+                <th style={{ width: 130, textAlign: 'center' }}>Breaching soon</th>
+                <th style={{ width: 100, textAlign: 'center' }}>Total open</th>
+                <th style={{ width: 200 }}>Risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {overdueByAssignee.map(a => {
+                const isUnassigned = a.id === '__unassigned';
+                const overdueShare = a.totalOpen > 0 ? (a.overdue / a.totalOpen) * 100 : 0;
+                return (
+                  <tr key={a.id}>
+                    <td>
+                      <span style={{ fontWeight: 500, fontSize: 13, color: isUnassigned ? 'var(--ink-3)' : 'var(--ink-0)', fontStyle: isUnassigned ? 'italic' : 'normal' }}>
+                        {a.name}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--sev-critical)' }}>{a.overdue}</span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600, color: a.breaching > 0 ? 'var(--sev-high)' : 'var(--ink-3)' }}>{a.breaching || '—'}</span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink-2)' }}>{a.totalOpen}</span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', height: 4, borderRadius: 100, overflow: 'hidden', background: 'var(--bg-3)' }}>
+                        <div style={{ width: `${overdueShare}%`, height: '100%', background: 'var(--sev-critical)' }} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* ── Asset Owner Risk Table ── */}
       {assetOwnerStats.length > 0 && (
         <div className="card" style={{ overflow: 'hidden' }}>
           <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-1)' }}>
             <div className="eyebrow" style={{ marginBottom: 2 }}>Asset Owner Risk Dashboard</div>
             <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-              Unresolved findings grouped by asset owner · "Unattributed" = findings with no asset owner set
+              Unresolved findings grouped by asset owner · Overdue / Breaching driven by SLA matrix from Settings · &quot;Unattributed&quot; = findings with no asset owner set
             </div>
           </div>
           <table className="tbl">
@@ -482,7 +629,8 @@ export function PortfolioDashboard() {
                 <th style={{ width: 90, textAlign: 'center' }}>Total</th>
                 <th style={{ width: 100, textAlign: 'center' }}>Unresolved</th>
                 <th style={{ width: 100, textAlign: 'center' }}>Crit / High</th>
-                <th style={{ width: 80, textAlign: 'center' }}>Overdue</th>
+                <th style={{ width: 80, textAlign: 'center' }} title="SLA overdue">Overdue</th>
+                <th style={{ width: 100, textAlign: 'center' }} title="Within 20% of SLA deadline">Breaching</th>
                 <th style={{ width: 90, textAlign: 'center' }}>Projects</th>
                 <th style={{ width: 140 }}>Exposure</th>
               </tr>
@@ -531,9 +679,21 @@ export function PortfolioDashboard() {
                       {owner.overdue > 0 ? (
                         <span style={{
                           fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 700,
+                          color: 'var(--sev-critical)', background: 'var(--sev-critical-bg)',
+                          padding: '2px 8px', borderRadius: 100,
+                          border: '1px solid rgba(255,92,58,0.2)',
+                        }}>{owner.overdue}</span>
+                      ) : (
+                        <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {(owner.breaching ?? 0) > 0 ? (
+                        <span style={{
+                          fontSize: 12, fontFamily: 'var(--font-mono)', fontWeight: 600,
                           color: 'var(--sev-high)', background: 'var(--sev-high-bg)',
                           padding: '2px 8px', borderRadius: 100,
-                        }}>{owner.overdue}</span>
+                        }}>{owner.breaching}</span>
                       ) : (
                         <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>—</span>
                       )}
