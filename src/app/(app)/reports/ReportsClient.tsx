@@ -241,8 +241,9 @@ function ReportRow({
               style={{ width: 28, padding: 0 }}
               title="Download PDF"
               onClick={() => {
-                const win = window.open(`/projects/${report.project.id}/report`, '_blank');
-                if (win) setTimeout(() => win.print(), 1500);
+                // Open the report preview — user clicks "Export PDF" there
+                // (which uses client-side window.print() in a clean popup, no Puppeteer needed)
+                window.open(`/projects/${report.project.id}/report`, '_blank');
               }}
             >
               <Ico name="download" size={13} />

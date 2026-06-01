@@ -959,22 +959,17 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
       const css = DEFAULT_CSS;
 
       // Wrap with full HTML document structure
-      const fullHtml = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="utf-8">
-            <style>
-              ${css}
-            </style>
-          </head>
-          <body>
-            <div id="rpt-area">
-              ${html}
-            </div>
-          </body>
-        </html>
-      `;
+      const fullHtml = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>${project.code} - Pentest Report</title>
+    <style>${css}</style>
+  </head>
+  <body>
+    <div id="rpt-area">${html}</div>
+  </body>
+</html>`;
 
       // Send to server for PDF generation
       const response = await fetch('/api/reports/generate-pdf', {
@@ -984,7 +979,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
           projectId: project.id,
           html: fullHtml,
           filename: `${project.code}-report-${new Date().toISOString().split('T')[0]}.pdf`,
-          action, // 'export' or 'save'
+          action,
         }),
       });
 
@@ -993,28 +988,29 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
         throw new Error(error.details || error.error || 'Failed to generate PDF');
       }
 
+      const contentType = response.headers.get('content-type') || '';
+
       if (action === 'export') {
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          const result = await response.json();
-          const downloadLink = document.createElement('a');
-          downloadLink.href = result.url;
-          downloadLink.download = result.filename || `${project.code}-report.pdf`;
-          document.body.appendChild(downloadLink);
-          downloadLink.click();
-          document.body.removeChild(downloadLink);
-        } else {
+        // Export returns the PDF as a binary blob
+        if (contentType.includes('application/pdf')) {
           const blob = await response.blob();
           const downloadUrl = window.URL.createObjectURL(blob);
           const downloadLink = document.createElement('a');
           downloadLink.href = downloadUrl;
-          downloadLink.download = `${project.code}-report-${new Date().toISOString().split('T')[0]}.pdf`;
+          downloadLink.download = `${project.code}-report.pdf`;
           document.body.appendChild(downloadLink);
           downloadLink.click();
           document.body.removeChild(downloadLink);
           window.URL.revokeObjectURL(downloadUrl);
+        } else {
+          // JSON error response (403, 500, etc.)
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.error || 'Failed to export report');
         }
       } else {
+        // Save returns JSON
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Failed to save report');
         setGenerated(true);
         setTimeout(() => setGenerated(false), 3000);
       }

@@ -6,6 +6,30 @@ import { ensureReportsDir } from '@/lib/ensure-reports-dir';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function bumpVersion(prev: string | null | undefined): string {
+  if (!prev) return '1.0';
+  const m1 = prev.match(/^(\d+)\.(\d+)$/);
+  if (m1) return `${m1[1]}.${parseInt(m1[2], 10) + 1}`;
+  const m2 = prev.match(/^v(\d+)$/i);
+  if (m2) return `v${parseInt(m2[1], 10) + 1}`;
+  const m3 = prev.match(/^(\d+)$/);
+  if (m3) return String(parseInt(m3[1], 10) + 1);
+  return `${prev}.1`;
+}
+
+function countPages(pdfBuffer: Buffer): number {
+  try {
+    const matches = pdfBuffer.toString('latin1').match(/\/Type\s*\/Page[^s]/g);
+    return matches && matches.length > 0 ? matches.length : 1;
+  } catch {
+    return 1;
+  }
+}
+
+// ── Route ────────────────────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   let browser;
   try {
@@ -15,14 +39,22 @@ export async function POST(request: NextRequest) {
     if (!html || !projectId) {
       return NextResponse.json(
         { error: 'Missing html or projectId' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Ensure reports directory exists
-    const reportsDir = await ensureReportsDir();
+    // ── Only approved reports can be exported ──────────────────────────────
+    if (action === 'export') {
+      const report = await db.report.findFirst({ where: { projectId } });
+      if (!report || report.status !== 'approved') {
+        return NextResponse.json(
+          { error: 'Only approved reports can be downloaded.' },
+          { status: 403 },
+        );
+      }
+    }
 
-    // Launch Puppeteer
+    // ── Launch headless browser ────────────────────────────────────────────
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -31,14 +63,65 @@ export async function POST(request: NextRequest) {
     const page = await browser.newPage();
     await page.setViewport({ width: 794, height: 1123 });
 
-    // Increase timeouts — report HTML can be heavy with embedded images,
-    // base64 logos, and complex CSS, so 30s (Puppeteer default) often isn't enough.
-    page.setDefaultNavigationTimeout(600_000); // 10 minutes
-    page.setDefaultTimeout(600_000);           // 10 minutes for all other waits
+    // 10-minute ceiling for the whole operation.
+    const TEN_MINUTES = 600_000;
+    page.setDefaultNavigationTimeout(TEN_MINUTES);
+    page.setDefaultTimeout(TEN_MINUTES);
 
-    await page.setContent(html, { waitUntil: 'networkidle2', timeout: 600_000 });
+    // Abort non-essential requests so a slow CDN doesn't hang the job.
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const url = req.url();
+      if (
+        url.startsWith('data:') ||
+        url.includes('fonts.googleapis.com') ||
+        url.includes('fonts.gstatic.com') ||
+        url.endsWith('.woff2') || url.endsWith('.woff') ||
+        url.endsWith('.ttf') || url.endsWith('.otf')
+      ) {
+        req.continue();
+      } else {
+        req.abort();
+      }
+    });
 
-    const reportFilename = filename || `report-${projectId}-${Date.now()}.pdf`;
+    // 'load' fires when all resources load (or fail) — unlike 'networkidle2'
+    // it won't hang forever on a slow / stuck connection.
+    await page.setContent(html, { waitUntil: 'load', timeout: TEN_MINUTES });
+
+    // Wait for web fonts, but don't block the whole job if they're slow.
+    try {
+      await page.evaluate(
+        () => (document as any).fonts?.ready ?? Promise.resolve(),
+        { timeout: 30_000 },
+      );
+    } catch { /* proceed with fallback fonts */ }
+
+    // ── Generate PDF ───────────────────────────────────────────────────────
+    if (action === 'export') {
+      // Export: return PDF as a blob directly — no file written to disk.
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        printBackground: true,
+      });
+
+      const pdfBytes = Buffer.from(pdfBuffer);
+      const downloadFilename = filename || `report-${projectId}.pdf`;
+
+      return new NextResponse(pdfBytes, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${downloadFilename}"`,
+          'Content-Length': String(pdfBytes.length),
+        },
+      });
+    }
+
+    // ── Save: persist to disk + DB ─────────────────────────────────────────
+    const reportsDir = await ensureReportsDir();
+    const reportFilename = filename || `${projectId}.pdf`;
     const filePath = path.join(reportsDir, reportFilename);
 
     await page.pdf({
@@ -52,38 +135,14 @@ export async function POST(request: NextRequest) {
     const sizeKB = Math.round(stats.size / 1024);
     const sizeStr = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
 
-    // ── Count pages from the produced PDF ─────────────────────────────────────
-    // Cheap-and-cheerful: regex `/Type /Page` (not /Pages) occurrences in the
-    // raw PDF bytes. Robust enough for puppeteer-produced PDFs which don't
-    // do anything exotic.
-    let pageCount = 1;
-    try {
-      const pdfBytes = await fs.readFile(filePath);
-      const matches = pdfBytes.toString('latin1').match(/\/Type\s*\/Page[^s]/g);
-      if (matches && matches.length > 0) pageCount = matches.length;
-    } catch { /* ignore — keep default 1 */ }
+    const pdfBytesForCount = await fs.readFile(filePath);
+    const pageCount = countPages(pdfBytesForCount);
 
-    // Helper: bump "1.0" → "1.1" or "v1" → "v2" sensibly
-    function bumpVersion(prev: string | null | undefined): string {
-      if (!prev) return '1.0';
-      const m1 = prev.match(/^(\d+)\.(\d+)$/);
-      if (m1) return `${m1[1]}.${parseInt(m1[2], 10) + 1}`;
-      const m2 = prev.match(/^v(\d+)$/i);
-      if (m2) return `v${parseInt(m2[1], 10) + 1}`;
-      // Plain integer or unknown format — append a counter
-      const m3 = prev.match(/^(\d+)$/);
-      if (m3) return String(parseInt(m3[1], 10) + 1);
-      return `${prev}.1`;
-    }
-
-    // ── Upsert Report DB record (1 report per project) ────────────────────────
-    if (action === 'save' && session) {
+    // Upsert the DB record
+    if (session) {
       const existing = await db.report.findFirst({ where: { projectId } });
 
       if (existing) {
-        // Regenerate → bump the version and refresh page count + size. Reset
-        // review state since the content has changed (matches the existing
-        // "approved → in-review on edit" pattern).
         const nextVersion = bumpVersion(existing.version);
         await db.report.update({
           where: { id: existing.id },
@@ -95,9 +154,8 @@ export async function POST(request: NextRequest) {
           },
         });
       } else {
-        // Create the first report for this project
         const count = await db.report.count();
-        const code  = `R-${String(count + 1).padStart(4, '0')}`;
+        const code = `R-${String(count + 1).padStart(4, '0')}`;
         await db.report.create({
           data: {
             code,
@@ -116,15 +174,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       filename: reportFilename,
-      url: `/reports/${reportFilename}`,
-      size: stats.size,
       projectId,
     });
   } catch (error) {
     console.error('PDF generation error:', error);
     return NextResponse.json(
-      { error: 'Failed to generate PDF', details: error instanceof Error ? error.message : String(error) },
-      { status: 500 }
+      {
+        error: 'Failed to generate PDF',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 },
     );
   } finally {
     if (browser) {
