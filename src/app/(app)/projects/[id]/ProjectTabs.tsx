@@ -53,6 +53,11 @@ type Project = {
   executiveSummary: string;
   methodology: string;
   attackNarrative: string;
+  keySecurityStrengths?: string;
+  keyAreasForImprovement?: string;
+  immediateActions?: string;
+  shortTermImprovements?: string;
+  longTermRecommendations?: string;
   members: string;
   notes: string;
   lead: { id: string; name: string; initials: string; role: string };
@@ -541,6 +546,16 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
   const [aiError, setAiError] = useState('');
   const [execSummaryKey, setExecSummaryKey] = useState(0);
   const [attackNarrKey, setAttackNarrKey] = useState(0);
+  const [strengthsKey, setStrengthsKey] = useState(0);
+  const [areasKey, setAreasKey] = useState(0);
+  const [immediateKey, setImmediateKey] = useState(0);
+  const [shortTermKey, setShortTermKey] = useState(0);
+  const [longTermKey, setLongTermKey] = useState(0);
+  const [aiStrengths, setAiStrengths] = useState<string | null>(null);
+  const [aiAreas, setAiAreas] = useState<string | null>(null);
+  const [aiImmediate, setAiImmediate] = useState<string | null>(null);
+  const [aiShortTerm, setAiShortTerm] = useState<string | null>(null);
+  const [aiLongTerm, setAiLongTerm] = useState<string | null>(null);
   const [aiExecSummary, setAiExecSummary] = useState<string | null>(null);
   const [aiAttackNarr, setAiAttackNarr] = useState<string | null>(null);
 
@@ -619,12 +634,56 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           body: JSON.stringify(patch),
         });
       }
-    } catch (e) {
-      setAiError(e instanceof Error ? e.message : 'AI generation failed');
-    } finally {
-      setAiPhase('idle');
-    }
-  }, [aiPhase, findings, counts, project]);
+    } catch (e) { setAiError(e instanceof Error ? e.message : 'AI generation failed'); }
+    finally { setAiPhase('idle'); }
+  }, [aiPhase, project, findings, counts, riskScore]);
+
+  // Generate a single section with full report context sent to AI
+  const generateSectionAI = useCallback(async (field: string) => {
+    if (aiPhase !== 'idle') return;
+    setAiPhase('thinking');
+    setAiError('');
+    try {
+      const res = await fetch('/api/ai/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'report-section',
+          context: {
+            section: field,
+            projectName: project.name,
+            engagement: project.engagement,
+            findings: findings.map((f: any) => ({
+              title: f.title, severity: f.severity, cvss: f.cvss,
+              description: f.description, impact: f.impact, remediation: f.remediation,
+            })),
+            counts,
+            riskScore: findings.length === 0 ? 0 : ((counts.critical||0)*10 + (counts.high||0)*7 + (counts.medium||0)*4 + (counts.low||0)*1) / Math.max(1, findings.length),
+            startDate: project.startDate, endDate: project.endDate,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'AI generation failed');
+      const data = await res.json();
+      const result = data.result?.content || data.result?.[field] || '';
+      if (result) {
+        // Save to backend
+        await fetch(`/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: result }),
+        });
+        // Update local state so editor shows content immediately
+        if (field === 'keySecurityStrengths') { setAiStrengths(result); setStrengthsKey(k => k + 1); }
+        else if (field === 'keyAreasForImprovement') { setAiAreas(result); setAreasKey(k => k + 1); }
+        else if (field === 'immediateActions') { setAiImmediate(result); setImmediateKey(k => k + 1); }
+        else if (field === 'shortTermImprovements') { setAiShortTerm(result); setShortTermKey(k => k + 1); }
+        else if (field === 'longTermRecommendations') { setAiLongTerm(result); setLongTermKey(k => k + 1); }
+        toast.success('Content generated');
+      }
+    } catch (e) { setAiError(e instanceof Error ? e.message : 'AI generation failed'); }
+    finally { setAiPhase('idle'); }
+  }, [aiPhase, project, findings, counts, riskScore]);
 
   async function handleDeleteFinding(findingId: string) {
     if (!confirm('Delete this finding permanently? This cannot be undone.')) return;
@@ -1183,34 +1242,58 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
               </div>
             </div>
 
-            {/* Attack Narrative — big editor box, same writing experience as Notes */}
+            {/* Key Security Strengths */}
             <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div className="eyebrow" style={{ marginBottom: 4 }}>Attack Narrative</div>
-                  <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Walk-through of key attack chains discovered during the engagement. Markdown · Live co-editing · Auto-saved.</div>
-                </div>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => generateSummaryWithAI(['attackNarrative'])}
-                  disabled={aiPhase !== 'idle'}
-                  style={{ fontSize: 11, gap: 4 }}
-                  title="Regenerate just this section"
-                >
-                  <span>✨</span>
-                  AI
-                </button>
+                <div style={{ flex: 1 }}><div className="eyebrow" style={{ marginBottom: 4 }}>Key Security Strengths</div><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>What the organisation is doing well. Markdown · Auto-saved.</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={() => generateSectionAI('keySecurityStrengths')} disabled={aiPhase !== 'idle'} style={{ fontSize: 11, gap: 4 }}><span>✨</span> AI</button>
               </div>
-              <div style={{ height: 'calc(100vh - 280px)', minHeight: 600, display: 'flex', flexDirection: 'column' }}>
-                <ProjectNotesEditor
-                  key={`narr-${attackNarrKey}`}
-                  projectId={project.id}
-                  field="attackNarrative"
-                  label="Attack Narrative"
-                  description="Markdown · Live co-editing · Auto-saved"
-                  initialNotes={aiAttackNarr !== null && attackNarrKey > 0 ? aiAttackNarr : (project.attackNarrative || '')}
-                  placeholder={`# Attack Narrative\n\nDuring the engagement, the team identified an attack chain that led to full domain compromise:\n\n1. Initial access via SQL injection on /api/login\n2. Privilege escalation through…`}
-                />
+              <div style={{ height: 300, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor key={`strengths-${strengthsKey}`} projectId={project.id} field="keySecurityStrengths" label="Key Security Strengths" description="Markdown · Auto-saved" initialNotes={aiStrengths !== null && strengthsKey > 0 ? aiStrengths : (project.keySecurityStrengths || '')} placeholder="- MFA enforced on critical systems\n- Regular security awareness training\n- Proper network segmentation" />
+              </div>
+            </div>
+
+            {/* Key Areas for Improvement */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}><div className="eyebrow" style={{ marginBottom: 4 }}>Key Areas for Improvement</div><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Critical areas needing attention based on findings. Markdown · Auto-saved.</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={() => generateSectionAI('keyAreasForImprovement')} disabled={aiPhase !== 'idle'} style={{ fontSize: 11, gap: 4 }}><span>✨</span> AI</button>
+              </div>
+              <div style={{ height: 300, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor key={`areas-${areasKey}`} projectId={project.id} field="keyAreasForImprovement" label="Key Areas for Improvement" description="Markdown · Auto-saved" initialNotes={aiAreas !== null && areasKey > 0 ? aiAreas : (project.keyAreasForImprovement || '')} placeholder="- Several high-severity findings need immediate remediation\n- Patch management process needs improvement" />
+              </div>
+            </div>
+
+            {/* Immediate Actions */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}><div className="eyebrow" style={{ marginBottom: 4 }}>Immediate Actions (0–30 Days)</div><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Critical fixes that must be addressed within the first month. Markdown · Auto-saved.</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={() => generateSectionAI('immediateActions')} disabled={aiPhase !== 'idle'} style={{ fontSize: 11, gap: 4 }}><span>✨</span> AI</button>
+              </div>
+              <div style={{ height: 280, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor key={`immediate-${immediateKey}`} projectId={project.id} field="immediateActions" label="Immediate Actions" description="Markdown · Auto-saved" initialNotes={aiImmediate !== null && immediateKey > 0 ? aiImmediate : (project.immediateActions || '')} placeholder="- Patch the SQL injection vulnerability on /api/login (Critical, CVSS 9.8)\n- Rotate all credentials exposed during the assessment\n- Apply missing security patches on internet-facing servers\n- ..." />
+              </div>
+            </div>
+
+            {/* Short-Term Improvements */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}><div className="eyebrow" style={{ marginBottom: 4 }}>Short-Term Improvements (30–90 Days)</div><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Security enhancements to implement within the quarter. Markdown · Auto-saved.</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={() => generateSectionAI('shortTermImprovements')} disabled={aiPhase !== 'idle'} style={{ fontSize: 11, gap: 4 }}><span>✨</span> AI</button>
+              </div>
+              <div style={{ height: 280, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor key={`shortterm-${shortTermKey}`} projectId={project.id} field="shortTermImprovements" label="Short-Term Improvements" description="Markdown · Auto-saved" initialNotes={aiShortTerm !== null && shortTermKey > 0 ? aiShortTerm : (project.shortTermImprovements || '')} placeholder="- Deploy WAF rules to protect against the injection vulnerabilities discovered\n- Implement network segmentation between user VLAN and server VLAN\n- Roll out MFA for all privileged accounts\n- ..." />
+              </div>
+            </div>
+
+            {/* Long-Term Recommendations */}
+            <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', marginBottom: 20, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1 }}><div className="eyebrow" style={{ marginBottom: 4 }}>Long-Term Strategic Recommendations</div><div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Strategic roadmap for lasting security posture improvement. Markdown · Auto-saved.</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={() => generateSectionAI('longTermRecommendations')} disabled={aiPhase !== 'idle'} style={{ fontSize: 11, gap: 4 }}><span>✨</span> AI</button>
+              </div>
+              <div style={{ height: 280, display: 'flex', flexDirection: 'column' }}>
+                <ProjectNotesEditor key={`longterm-${longTermKey}`} projectId={project.id} field="longTermRecommendations" label="Long-Term Recommendations" description="Markdown · Auto-saved" initialNotes={aiLongTerm !== null && longTermKey > 0 ? aiLongTerm : (project.longTermRecommendations || '')} placeholder="- Implement a zero-trust architecture with micro-segmentation\n- Establish a continuous security testing program with quarterly penetration tests\n- Build an internal red team capability for adversary simulation\n- ..." />
               </div>
             </div>
 

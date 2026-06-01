@@ -1250,17 +1250,23 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
               blocks.push(<p key="scope-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No scope defined.</p>);
             }
             blocks.push(<SubHead key="sub-1.3" num="1.3">Key Security Strengths</SubHead>);
-            blocks.push(
-              <p key="strengths-p" className="rpt-p">
-                {totalFindings === 0
-                  ? 'No significant vulnerabilities were identified. The assessed environment demonstrated strong security posture.'
-                  : counts.critical === 0 && counts.high === 0
-                  ? 'No critical or high-severity findings were identified. The assessed controls are generally effective.'
-                  : 'The environment demonstrated baseline security controls. Standard authentication mechanisms and input validation were observed on primary endpoints.'}
-              </p>
-            );
+            if ((project as any).keySecurityStrengths) {
+              renderMarkdownToNodes((project as any).keySecurityStrengths).forEach((n, i) => blocks.push(<React.Fragment key={`strengths-md-${i}`}>{n}</React.Fragment>));
+            } else {
+              blocks.push(
+                <p key="strengths-p" className="rpt-p">
+                  {totalFindings === 0
+                    ? 'No significant vulnerabilities were identified. The assessed environment demonstrated strong security posture.'
+                    : counts.critical === 0 && counts.high === 0
+                    ? 'No critical or high-severity findings were identified. The assessed controls are generally effective.'
+                    : 'The environment demonstrated baseline security controls. Standard authentication mechanisms and input validation were observed on primary endpoints.'}
+                </p>
+              );
+            }
             blocks.push(<SubHead key="sub-1.4" num="1.4">Key Areas for Improvement</SubHead>);
-            if (sorted.slice(0, 3).length > 0) {
+            if ((project as any).keyAreasForImprovement) {
+              renderMarkdownToNodes((project as any).keyAreasForImprovement).forEach((n, i) => blocks.push(<React.Fragment key={`areas-md-${i}`}>{n}</React.Fragment>));
+            } else if (sorted.slice(0, 3).length > 0) {
               blocks.push(
                 <ul key="areas-list" className="rpt-ul">
                   {sorted.slice(0, 3).map(f => {
@@ -1288,9 +1294,26 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
           {/* ══ STRATEGIC RECOMMENDATIONS (block-paginated) ══ */}
           {(() => {
             const blocks: React.ReactNode[] = [];
+            blocks.push(<SecHead key="head" num="2">Strategic Recommendations</SecHead>);
+            // Use custom content if provided, otherwise auto-generate
+            const hasCustomRecs = !!(project as any).immediateActions || !!(project as any).shortTermImprovements || !!(project as any).longTermRecommendations;
+            if (hasCustomRecs) {
+              if ((project as any).immediateActions) {
+                blocks.push(<SubHead key="sub-2.1" num="2.1">Immediate Actions (0–30 Days)</SubHead>);
+                renderMarkdownToNodes((project as any).immediateActions).forEach((n, i) => blocks.push(<React.Fragment key={`imm-md-${i}`}>{n}</React.Fragment>));
+              }
+              if ((project as any).shortTermImprovements) {
+                blocks.push(<SubHead key="sub-2.2" num="2.2">Short-Term Improvements (30–90 Days)</SubHead>);
+                renderMarkdownToNodes((project as any).shortTermImprovements).forEach((n, i) => blocks.push(<React.Fragment key={`st-md-${i}`}>{n}</React.Fragment>));
+              }
+              if ((project as any).longTermRecommendations) {
+                blocks.push(<SubHead key="sub-2.3" num="2.3">Long-Term Strategic Recommendations</SubHead>);
+                renderMarkdownToNodes((project as any).longTermRecommendations).forEach((n, i) => blocks.push(<React.Fragment key={`lt-md-${i}`}>{n}</React.Fragment>));
+              }
+              return <PaginatedBlocks id="__strat" blocks={blocks} startPage={stratStartPage} totalPages={totalPages} project={project} onPageCount={onPageCount} />;
+            }
             const critHighList = sorted.filter(f => f.severity === 'critical' || f.severity === 'high');
             const medList = sorted.filter(f => f.severity === 'medium');
-            blocks.push(<SecHead key="head" num="2">Strategic Recommendations</SecHead>);
             blocks.push(<SubHead key="sub-2.1" num="2.1">Immediate Actions (0–30 Days)</SubHead>);
             if (critHighList.length > 0) {
               blocks.push(<p key="ch-p" className="rpt-p">The following critical and high-severity findings require immediate attention:</p>);
@@ -1419,11 +1442,6 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                 of out-of-scope third-party processors. Testing was conducted during agreed windows only.
               </div>
             );
-            if (project.attackNarrative) {
-              blocks.push(<SubHead key="sub-3.4" num="3.4">Attack Narrative</SubHead>);
-              renderMarkdownToNodes(project.attackNarrative).forEach((n, i) =>
-                blocks.push(<React.Fragment key={`narr-${i}`}>{n}</React.Fragment>));
-            }
             return <PaginatedBlocks id="__tech" blocks={blocks} startPage={techStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount} />;
           })()}
 

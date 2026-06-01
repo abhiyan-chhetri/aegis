@@ -31,12 +31,12 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { type, context } = body as {
-      type: 'finding' | 'summary';
+      type: 'finding' | 'summary' | 'report-section';
       context: Record<string, unknown> & { projectId?: string };
     };
 
-    if (!type || !['finding', 'summary'].includes(type)) {
-      return NextResponse.json({ error: 'Invalid type — must be "finding" or "summary"' }, { status: 400 });
+    if (!type || !['finding', 'summary', 'report-section'].includes(type)) {
+      return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
     }
 
     const config = await getAIConfig();
@@ -69,6 +69,12 @@ export async function POST(request: NextRequest) {
 
     if (type === 'summary') {
       const result = await generateSummary(config, enrichedCtx as Parameters<typeof generateSummary>[1]);
+      return NextResponse.json({ result, provider: config.provider });
+    }
+
+    if (type === 'report-section') {
+      const { generateReportSection } = await import('@/lib/ai');
+      const result = await generateReportSection(config, enrichedCtx as any);
       return NextResponse.json({ result, provider: config.provider });
     }
 

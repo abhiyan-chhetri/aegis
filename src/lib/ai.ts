@@ -800,3 +800,60 @@ export async function generateSummary(config: AIConfig, ctx: ExecutiveSummaryCon
     attackNarrative:  parsed.attackNarrative  || '',
   };
 }
+
+// ── Report Section Generation ────────────────────────────────────────────────
+
+const REPORT_SECTION_PROMPT = `You are a senior penetration testing consultant writing a specific section of a client security assessment report.
+
+You will be given:
+- The section to write (keySecurityStrengths, keyAreasForImprovement, or strategicRecommendations)
+- Full context about the engagement: project name, engagement type, dates
+- All findings with severity, CVSS, CWE, description, impact, and remediation
+
+RULES:
+1. Write ONLY the requested section. Do not include other sections.
+2. Be SPECIFIC and DETAILED. Reference actual finding titles, severity levels, CVSS scores, CWE IDs, and affected assets from the provided findings list. Do NOT write generic advice — every recommendation must tie back to an actual finding.
+3. keySecurityStrengths: Write as many genuine, specific strengths as possible (not just 2-3 generic ones). Reference specific controls, configurations, or processes that were observed to be effective. Include technical specifics where possible (e.g. "MFA enforced on all VPN and O365 access via Entra ID Conditional Access" not just "MFA in place").
+4. keyAreasForImprovement: List every significant gap found, ordered by risk. Each should reference the specific finding(s) it relates to. Be technical and precise.
+5. immediateActions (0-30 days): Critical fixes referencing specific findings. Include CVSS scores, affected systems, and concrete remediation steps from the findings.
+6. shortTermImprovements (30-90 days): Medium-severity fixes and process improvements. Reference specific findings and systems.
+7. longTermRecommendations: Strategic, architectural improvements. Be ambitious but grounded in the actual findings.
+8. Write in markdown. Every bullet should be 2-4 sentences with technical detail.
+9. Tone: Professional, direct, technically precise. No filler. No vague statements.
+
+Return ONLY the markdown content for the requested section — no JSON wrapper, no explanation.`;
+
+export async function generateReportSection(config: AIConfig, ctx: {
+  section: string; projectName: string; engagement: string;
+  findings: Array<{title:string;severity:string;cvss:number;description:string;impact:string;remediation:string}>;
+  counts: Record<string,number>; riskScore: number; startDate: string; endDate: string;
+}): Promise<{ content: string }> {
+  if (config.provider === 'demo') {
+    const demos: Record<string, string> = {
+      keySecurityStrengths: '- **Multi-factor authentication is enforced on all externally-facing systems** — VPN, O365, and Citrix gateway require Entra ID Conditional Access with FIDO2 security keys for all privileged accounts, preventing credential replay and phishing attacks against administrative users.\n- **EDR telemetry is deployed across 94% of monitored endpoints** — Microsoft Defender for Endpoint is active on all Windows 10/11 workstations and Server 2019+ systems, providing process-level visibility, ASR rules, and automated investigation capabilities. This was instrumental in the SOC detecting the phishing attachment within 2 hours.\n- **SIEM correlation rules provide baseline Windows Event Log visibility** — Event IDs 4624 (logon), 4688 (process creation), and 5140 (file share access) are forwarded from all domain controllers and critical servers. While coverage gaps exist (see Areas for Improvement), the existing telemetry provided sufficient data for post-hoc reconstruction of the attack timeline.\n- **Network segmentation exists between corporate and guest/OT networks** — A properly configured Palo Alto firewall cluster separates the corporate LAN (10.2.0.0/16) from the guest WiFi and OT/ICS networks. Lateral movement was contained within the corporate segment.',
+      keyAreasForImprovement: '- **Weak service account passwords allowed credential theft** — The svc-sql, svc-backup, and 4 other service accounts used passwords that were cracked within 2 hours using hashcat with the rockyou.txt wordlist and Acme-specific mutations. The svc-sql account password ("AcmeSQL2024!") passed Active Directory complexity requirements but followed a predictable naming pattern. These accounts had local administrator rights on 12 servers, providing a direct path to the server VLAN. (Critical, see Finding F-001)\n- **No Credential Guard on domain-joined systems** — Windows Credential Guard was not enabled on any workstation or server. This allowed the red team to dump LSASS process memory using nanodump and extract a cached Domain Admin NTLM hash from a server where an administrator had recently authenticated via RDP. Enabling Credential Guard with VBS would have prevented credential extraction entirely. (Critical, see Finding F-003)\n- **Unrestricted Layer 3 connectivity between user VLAN and server VLAN** — No firewall rules or ACLs restrict traffic from user workstations (10.2.0.0/16) to servers (10.4.0.0/16). Once a foothold was established on FIN-WS-07, the red team could directly scan and authenticate to all servers including domain controllers. Implementing jump hosts with MFA and restricting SMB/RDP/WinRM to authorized management subnets would add critical lateral movement friction. (High, see Finding F-002)\n- **No Kerberoasting alerting configured in SIEM** — Event ID 4769 with Ticket Encryption Type 0x17 (RC4-HMAC) was not monitored. The red team requested 14 TGS tickets and cracked 6 offline without generating a single alert. A Sigma rule for this detection exists in the public repository and can be deployed in under an hour. (Medium, see Finding F-004)\n- **File share auditing is disabled on sensitive shares** — Object access auditing (SACL) was not configured on \\\\files\\R&D, \\\\files\\HR, or \\\\files\\Finance. The exfiltration of 4.2 GB of sensitive documents generated zero log entries, making forensic reconstruction impossible.',
+      immediateActions: '- **Rotate all service account passwords immediately** — The svc-sql, svc-backup, and all Kerberoastable accounts must have their passwords changed to 24+ character random values generated by a password manager. Deploy Managed Service Accounts (MSAs) where supported by the application stack. Until MSAs are in place, implement a monthly automated password rotation schedule. (Critical, F-001)\n- **Enable Windows Credential Guard on all Tier-0 and Tier-1 assets** — Deploy via Group Policy to all domain controllers, domain admin workstations, and privilege access workstations. Enable LSA Protection (RunAsPPL) as an immediate compensating control on all other servers until Credential Guard can be fully rolled out. This directly prevents the LSASS credential dumping technique used during the engagement. (Critical, F-003)\n- **Deploy Kerberoasting detection Sigma rule** — Import the public Sigma rule for Event ID 4769 with RC4 encryption type into the SIEM. Configure alerting for any single host requesting more than 5 TGS tickets within a 10-minute window. Enable the Microsoft 4769 audit policy on all domain controllers if not already active. (Medium, F-004)\n- **Apply missing security patches on FIN-WS-07 and the Citrix gateway** — The PrintNightmare vulnerability (CVE-2021-34527) was exploited for local privilege escalation. Verify patch KB5005030 is applied to all systems and configure "RestrictDriverInstallationToAdministrators" via Group Policy as a defense-in-depth measure.\n- **Audit and remove excessive user permissions** — The finance team members who opened the phishing attachment had local administrator rights on their workstations. Remove local admin rights from all non-IT users and implement LAPS for local administrator password management.',
+      shortTermImprovements: '- **Implement network ACLs between user and server VLANs** — Configure the Palo Alto firewall to restrict user-to-server traffic to authorized ports only. HTTP/HTTPS, RDP (3389), SMB (445), and WinRM (5985/5986) should only be permitted from designated management jump hosts. This single change would have prevented the lateral movement path used on Day 5-6 of the engagement. (High, F-002)\n- **Deploy jump hosts with MFA for all server administration** — Create a dedicated management VLAN with Windows Admin Center or Azure Bastion for all server access. Require MFA via Entra ID Conditional Access for all privileged sessions. Log all jump host sessions for audit purposes.\n- **Enable file share auditing on sensitive shares** — Configure SACLs on \\\\files\\R&D, \\\\files\\HR, and \\\\files\\Finance to audit Read, Write, and Delete operations by all non-system accounts. Forward these events to the SIEM and create alerts for unusual access patterns (e.g., single user accessing files across multiple shares within a short window).\n- **Conduct security awareness training focused on credential phishing** — The initial compromise succeeded because 2 of 12 targeted employees opened the phishing attachment and enabled macros. Implement quarterly phishing simulations with immediate just-in-time training for users who click. Track click rates over time to measure improvement.\n- **Deploy application control (AppLocker / WDAC) on all user workstations** — The macro-enabled Excel attachment and subsequent VBA dropper would have been blocked by a default-deny application control policy. Start in audit mode on critical departments (Finance, HR, IT) and move to enforcement within 60 days.',
+      longTermRecommendations: '- **Implement a tiered administration model (Tier 0/1/2)** — Restructure Active Directory access so that Domain Admins cannot log into non-Tier-0 systems, preventing credential theft from lower-tier assets. Deploy Microsoft\'s Privileged Access Workstations (PAW) for all Tier-0 administration. This is the single highest-impact architectural change from the engagement.\n- **Establish a continuous security testing program** — Conduct quarterly penetration tests of the corporate network and annual red team operations. Supplement with monthly automated vulnerability scanning of all internal IP ranges. Track mean time to remediate (MTTR) for critical findings as a board-level KPI.\n- **Deploy Microsoft Sentinel for cloud-native SIEM/SOAR** — Migrate from the current on-premises SIEM to Sentinel to gain UEBA (User and Entity Behavior Analytics), built-in MITRE ATT&CK mapping, and automated playbook response capabilities. The existing Microsoft E5 licensing likely already includes Sentinel ingestion at no additional cost.\n- **Implement a zero-trust architecture with micro-segmentation** — Move beyond VLAN-based segmentation to identity-aware micro-segmentation using Azure AD Conditional Access and network policy server integration. Authenticate and authorize every east-west connection, not just north-south traffic at the perimeter.',
+    };
+    return { content: demos[ctx.section] || '' };
+  }
+
+  const userMsg = [
+    `SECTION TO WRITE: ${ctx.section}`,
+    `PROJECT: ${ctx.projectName} (${ctx.engagement})`,
+    `DATES: ${ctx.startDate || 'N/A'} — ${ctx.endDate || 'N/A'}`,
+    `RISK SCORE: ${ctx.riskScore.toFixed(1)}`,
+    `SEVERITY BREAKDOWN: Critical=${ctx.counts.critical||0}, High=${ctx.counts.high||0}, Medium=${ctx.counts.medium||0}, Low=${ctx.counts.low||0}, Info=${ctx.counts.info||0}`,
+    '',
+    'FINDINGS:',
+    ...ctx.findings.map((f, i) =>
+      `${i+1}. [${f.severity.toUpperCase()}] ${f.title} (CVSS ${f.cvss})\n   Description: ${(f.description||'').slice(0,300)}\n   Impact: ${(f.impact||'').slice(0,200)}\n   Remediation: ${(f.remediation||'').slice(0,200)}`
+    ),
+    '',
+    'Write ONLY the requested section content in markdown. No JSON, no wrapper.',
+  ].join('\n');
+
+  const raw = await callAI(config, REPORT_SECTION_PROMPT, userMsg);
+  return { content: raw.trim() };
+}

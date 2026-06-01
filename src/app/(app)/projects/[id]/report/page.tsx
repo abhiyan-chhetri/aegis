@@ -17,6 +17,9 @@ export default async function ReportPage({params }: Props) {
   const { id } = await params;
   const session = await getSession();
 
+  // Ensure new columns exist before querying them
+  try { const { ensureEnvColumns } = await import('@/lib/ensure-env-columns'); await ensureEnvColumns(); } catch {}
+
   const [project, rawRows, allUsers] = await Promise.all([
     db.project.findUnique({
       where: { id },
@@ -27,7 +30,13 @@ export default async function ReportPage({params }: Props) {
       },
     }),
     db.$queryRawUnsafe<Record<string, string>[]>(
-      `SELECT "executiveSummary", methodology, "attackNarrative", members FROM "Project" WHERE id = $1`, id
+      `SELECT "executiveSummary", methodology, "attackNarrative", members,
+              COALESCE("keySecurityStrengths",'') AS "keySecurityStrengths",
+              COALESCE("keyAreasForImprovement",'') AS "keyAreasForImprovement",
+              COALESCE("immediateActions",'') AS "immediateActions",
+              COALESCE("shortTermImprovements",'') AS "shortTermImprovements",
+              COALESCE("longTermRecommendations",'') AS "longTermRecommendations"
+       FROM "Project" WHERE id = $1`, id
     ),
     db.user.findMany({ select: { id: true, name: true, initials: true, role: true } }),
   ]);
@@ -65,7 +74,12 @@ export default async function ReportPage({params }: Props) {
     executiveSummary: rawExtra.executiveSummary ?? '',
     methodology:     rawExtra.methodology     ?? '',
     attackNarrative: rawExtra.attackNarrative ?? '',
-    members:         rawExtra.members         ?? '[]',
+    members:                  rawExtra.members                  ?? '[]',
+    keySecurityStrengths:     rawExtra.keySecurityStrengths     ?? '',
+    keyAreasForImprovement:   rawExtra.keyAreasForImprovement   ?? '',
+    immediateActions:         rawExtra.immediateActions         ?? '',
+    shortTermImprovements:    rawExtra.shortTermImprovements    ?? '',
+    longTermRecommendations:  rawExtra.longTermRecommendations  ?? '',
     startDate: project.startDate ? new Date(project.startDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'TBD',
     endDate: project.endDate ? new Date(project.endDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'TBD',
     createdAt: undefined,

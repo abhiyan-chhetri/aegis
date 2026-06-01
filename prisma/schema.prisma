@@ -86,7 +86,17 @@ model Project {
   /// employee perspective) or "external" (perimeter / public-facing). Drives
   /// SLA deadline computation since most clients hold internal tests to a
   /// laxer timeline than externally-exposed issues.
-  engagementType   String   @default("external")
+  engagementType        String   @default("external")
+  /// Report section: key security strengths observed during the assessment.
+  keySecurityStrengths  String   @default("")
+  /// Report section: key areas requiring improvement.
+  keyAreasForImprovement String  @default("")
+  /// Report section: immediate actions (0-30 days).
+  immediateActions       String @default("")
+  /// Report section: short-term improvements (30-90 days).
+  shortTermImprovements  String @default("")
+  /// Report section: long-term strategic recommendations.
+  longTermRecommendations String @default("")
   startDate        String
   endDate          String
   leadId           String

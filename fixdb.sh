@@ -175,6 +175,13 @@ CREATE TABLE IF NOT EXISTS "FindingWatcher" (
   PRIMARY KEY ("findingId", "userId")
 );
 
+-- v2.3 / Report Content — Strengths, Areas for Improvement, Recommendations
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "keySecurityStrengths"      TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "keyAreasForImprovement"    TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "immediateActions"          TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "shortTermImprovements"     TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "longTermRecommendations"   TEXT NOT NULL DEFAULT '';
+
 -- Future idempotent patches — append here, never DROP existing tables/columns
 SQL
 success "All schema patches applied"

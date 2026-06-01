@@ -8,14 +8,20 @@ import { v4 as uuidv4 } from 'uuid';
 // All content fields that we manage via raw SQL (bypasses Prisma schema validation entirely)
 // This includes executiveSummary even though it's in the original schema — raw SQL is safer
 // for fields that may be affected by our manual class.ts patch.
-const CONTENT_COLS = ['executiveSummary', 'methodology', 'attackNarrative', 'members', 'assetOwners', 'notes'] as const;
+const CONTENT_COLS = ['executiveSummary', 'methodology', 'attackNarrative', 'members', 'assetOwners', 'notes',
+  'keySecurityStrengths', 'keyAreasForImprovement', 'immediateActions', 'shortTermImprovements', 'longTermRecommendations'] as const;
 type ContentCol = typeof CONTENT_COLS[number];
 
 export async function getRawContentFields(id: string): Promise<Record<ContentCol, string>> {
   const rows = await db.$queryRawUnsafe<Record<string, string>[]>(
     `SELECT "executiveSummary", methodology, "attackNarrative", members,
             COALESCE("assetOwners", '[]') as "assetOwners",
-            COALESCE(notes, '') as notes
+            COALESCE(notes, '') as notes,
+            COALESCE("keySecurityStrengths", '') as "keySecurityStrengths",
+            COALESCE("keyAreasForImprovement", '') as "keyAreasForImprovement",
+            COALESCE("immediateActions", '') as "immediateActions",
+            COALESCE("shortTermImprovements", '') as "shortTermImprovements",
+            COALESCE("longTermRecommendations", '') as "longTermRecommendations"
      FROM "Project" WHERE id = $1`,
     id
   );
@@ -27,6 +33,11 @@ export async function getRawContentFields(id: string): Promise<Record<ContentCol
     members:          row.members          ?? '[]',
     assetOwners:      row.assetOwners      ?? '[]',
     notes:            row.notes            ?? '',
+    keySecurityStrengths:      row.keySecurityStrengths      ?? '',
+    keyAreasForImprovement:    row.keyAreasForImprovement    ?? '',
+    immediateActions:          row.immediateActions          ?? '',
+    shortTermImprovements:     row.shortTermImprovements     ?? '',
+    longTermRecommendations:   row.longTermRecommendations   ?? '',
   };
 }
 
@@ -145,6 +156,7 @@ export async function PATCH(
       dataClassification, criticality,
       // v2.2 SLA — internal vs external engagement
       engagementType,
+      keySecurityStrengths, keyAreasForImprovement, immediateActions, shortTermImprovements, longTermRecommendations,
     } = body;
 
     // ── Prisma-managed fields (in original schema, no risk) ───────────────────
@@ -183,11 +195,21 @@ export async function PATCH(
       rawUpdates.push({ col: 'criticality', val: criticality });
     if (typeof engagementType === 'string' && ['internal','external'].includes(engagementType))
       rawUpdates.push({ col: 'engagementType', val: engagementType });
+    if (typeof keySecurityStrengths === 'string')
+      rawUpdates.push({ col: 'keySecurityStrengths', val: keySecurityStrengths });
+    if (typeof keyAreasForImprovement === 'string')
+      rawUpdates.push({ col: 'keyAreasForImprovement', val: keyAreasForImprovement });
+    if (typeof immediateActions === 'string')
+      rawUpdates.push({ col: 'immediateActions', val: immediateActions });
+    if (typeof shortTermImprovements === 'string')
+      rawUpdates.push({ col: 'shortTermImprovements', val: shortTermImprovements });
+    if (typeof longTermRecommendations === 'string')
+      rawUpdates.push({ col: 'longTermRecommendations', val: longTermRecommendations });
 
     // Self-heal the env columns BEFORE the UPDATE references them — avoids
     // 42703 ("column does not exist") on installs that haven't restarted
     // the server since the v2.0 schema patch.
-    if (rawUpdates.some(u => u.col === 'dataClassification' || u.col === 'criticality')) {
+    if (rawUpdates.some(u => u.col === 'dataClassification' || u.col === 'criticality' || u.col === 'keySecurityStrengths' || u.col === 'keyAreasForImprovement' || u.col === 'immediateActions' || u.col === 'shortTermImprovements' || u.col === 'longTermRecommendations')) {
       try {
         const { ensureEnvColumns } = await import('@/lib/ensure-env-columns');
         await ensureEnvColumns();

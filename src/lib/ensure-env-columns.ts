@@ -60,6 +60,12 @@ export function ensureEnvColumns(): Promise<void> {
           PRIMARY KEY ("findingId", "userId")
         )`,
       );
+      // v2.3 — Report Content additional sections
+      await db.$executeRawUnsafe(`ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "keySecurityStrengths"      TEXT NOT NULL DEFAULT ''`);
+      await db.$executeRawUnsafe(`ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "keyAreasForImprovement"    TEXT NOT NULL DEFAULT ''`);
+      await db.$executeRawUnsafe(`ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "immediateActions"          TEXT NOT NULL DEFAULT ''`);
+      await db.$executeRawUnsafe(`ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "shortTermImprovements"     TEXT NOT NULL DEFAULT ''`);
+      await db.$executeRawUnsafe(`ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "longTermRecommendations"   TEXT NOT NULL DEFAULT ''`);
     } catch (err) {
       console.warn('[ensureEnvColumns] warning:', (err as Error).message);
       // Reset so the next call retries
