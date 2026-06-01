@@ -30,7 +30,13 @@ export async function POST(request: NextRequest) {
 
     const page = await browser.newPage();
     await page.setViewport({ width: 794, height: 1123 });
-    await page.setContent(html, { waitUntil: 'networkidle2' });
+
+    // Increase timeouts — report HTML can be heavy with embedded images,
+    // base64 logos, and complex CSS, so 30s (Puppeteer default) often isn't enough.
+    page.setDefaultNavigationTimeout(600_000); // 10 minutes
+    page.setDefaultTimeout(600_000);           // 10 minutes for all other waits
+
+    await page.setContent(html, { waitUntil: 'networkidle2', timeout: 600_000 });
 
     const reportFilename = filename || `report-${projectId}-${Date.now()}.pdf`;
     const filePath = path.join(reportsDir, reportFilename);
