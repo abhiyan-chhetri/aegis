@@ -4,7 +4,7 @@ All notable changes to Aegis are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 aims for practical, tester-focused releases.
 
-## [Unreleased] — Burp Bridge: the full traffic → findings loop
+## [v3.0] — Burp Bridge — 2026-08-26
 
 ### Added — Burp Bridge v1–v6
 - **Live traffic capture** from the Burp extension (Proxy / Repeater / Intruder / Scanner) via a key-authenticated ingest endpoint: dedup, size caps, scope guard, per-project capture rules (drop hosts / only tools / drop static), retention (90d default, auto-purge on project completion).

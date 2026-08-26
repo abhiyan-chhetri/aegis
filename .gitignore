@@ -51,4 +51,5 @@ next-env.d.ts
 *.tsbuildinfo
 
 # build outputs
-burp-extension/target/
+burp-extension/target/*
+!burp-extension/target/aegis-burp-bridge.jar
