@@ -3,11 +3,13 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Ico } from '@/components/chrome/icons';
-import { LivePresence } from '@/components/collab/LivePresence';
 import { toast } from '@/components/ui/Toast';
 import { PulseOnChange } from '@/components/anim/CvssRolldown';
 import { FindingComments } from './FindingComments';
 import { ScreenshotAnnotator } from './ScreenshotAnnotator';
+import { useFindingLive } from '@/components/collab/useFindingLive';
+import { FindingChat } from '@/components/ai/FindingChat';
+import { RemoteCarets } from '@/components/collab/RemoteCarets';
 
 // ── AI Generation Overlay ─────────────────────────────────────────────────────
 type AIPhase = 'idle' | 'thinking' | 'writing' | 'done';
@@ -330,6 +332,15 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   const [saving,        setSaving]        = useState(false);
   const [saved,         setSaved]         = useState(false);
   const [error,         setError]         = useState('');
+  // Save-conflict merge state — set when the server returns a genuine 409 with
+  // the latest committed values. The modal offers "Load latest" / "Keep mine".
+  const [conflictInfo,  setConflictInfo]  = useState<null | {
+    updatedAt: string;
+    fields: [string, string][];
+    resolve: (keepMine: boolean) => Promise<void>;
+  }>(null);
+  // Per-finding AI chat drawer
+  const [chatOpen, setChatOpen] = useState(false);
   const [evidence,      setEvidence]      = useState<EvidenceItem[]>([]);
   const [uploading,     setUploading]     = useState(false);
   const [editCap,       setEditCap]       = useState<string|null>(null);
@@ -349,12 +360,14 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   const [watching, setWatching] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
   const [watchBusy, setWatchBusy] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
+  const [watchNames, setWatchNames] = useState<{ id: string; name: string; initials: string }[]>([]);
   useEffect(() => {
     if (!isEditing || !finding?.id) return;
     let alive = true;
     fetch(`/api/findings/${finding.id}/watch`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (alive && d) { setWatching(!!d.watching); setWatchCount(d.count || 0); } })
+      .then(d => { if (alive && d) { setWatching(!!d.watching); setWatchCount(d.count || 0); setWatchNames(d.watchers || []); } })
       .catch(() => {});
     return () => { alive = false; };
   }, [isEditing, finding?.id]);
@@ -369,6 +382,12 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
         const d = await res.json();
         setWatching(!!d.watching);
         setWatchCount(d.count || 0);
+        setWatchNames(d.watchers || []);
+        toast.success(watching ? 'No longer watching' : 'Watching finding', {
+          description: watching
+            ? 'You won\'t be notified about changes to this finding.'
+            : 'You\'ll be notified when its status, severity, assignee or comments change.',
+        });
       }
     } finally { setWatchBusy(false); }
   }
@@ -376,7 +395,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   // ── Duplicate-finding detector ──────────────────────────────────────────
   // For new findings only. Debounced trigram-similarity check against
   // existing findings via /api/findings/similar.
-  type SimMatch = { id: string; code: string; title: string; severity: string; status: string; cwe: string; project: { id: string; code: string; name: string }; score: number };
+  type SimMatch = { id: string; code: string; title: string; severity: string; status: string; cwe: string; project: { id: string; code: string; name: string }; score: number; recurring?: boolean; engagementYear?: string };
   const [dupMatches, setDupMatches] = useState<SimMatch[]>([]);
   const [dupDismissed, setDupDismissed] = useState(false);
   useEffect(() => {
@@ -410,6 +429,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   const [annotating, setAnnotating] = useState<string | null>(null); // evidence ID being annotated
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // CVSS
@@ -440,95 +460,149 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
       .catch(()=>{});
   },[finding?.id]);
 
-  // ── Real-time collaboration via SSE ──────────────────────────────────────────
-  // typers: { [fieldName]: { userName, userColor } }
-  const [fieldTypers, setFieldTypers] = useState<Record<string, { userName: string; userColor: string }>>({});
-  const typingThrottle = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const myUserId = useRef<string | null>(null);
+  // ── Real-time collaboration (SSE live channel) ─────────────────────────────
+  // Live doc model: every edit is broadcast to everyone on the finding's
+  // channel. Remote edits are applied to a field UNLESS the local user is
+  // actively editing that exact field (then we keep our keystrokes and show a
+  // "both editing" pill — last-write-wins on save).
+  const live = useFindingLive(finding?.id, isEditing);
+  const myActiveFieldRef = useRef<string | null>(null);
+  const [myActiveField, setMyActiveFieldState] = useState<string | null>(null);
 
-  useEffect(()=>{
-    if (!finding?.id || !isEditing) return;
-    const es = new EventSource(`/api/collab/finding:${finding.id}`);
+  // ── Save token (optimistic-locking base) ──────────────────────────────────
+  // Initialised from the finding we loaded and refreshed after every
+  // successful save / committed broadcast, so saving twice in a row never
+  // trips a stale-token conflict.
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(() => {
+    const u = (finding as { updatedAt?: string | Date | null } | undefined)?.updatedAt;
+    if (!u) return null;
+    return u instanceof Date ? u.toISOString() : String(u);
+  });
 
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+  function setMyActive(field: string | null) {
+    myActiveFieldRef.current = field;
+    setMyActiveFieldState(field);
+    live.setActiveField(field);
+    // Note: we deliberately do NOT push a cursor here — the individual focus
+    // handlers push the control's REAL caret position. Pushing 0 made remote
+    // carets snap to the start of the field whenever anyone clicked into it.
+  }
 
-        // Capture our own user id so we can filter out our own typing echoes
-        if (data.type === 'connected' && data.userId) {
-          myUserId.current = data.userId;
-        }
+  // ── Own-caret persistence ──────────────────────────────────────────────────
+  // Save where THIS user's caret is (field + offset) so a page reload restores
+  // it instead of dropping it at the start of the text. Also broadcast it.
+  const caretStorageKey = finding?.id ? `aegis_caret_${finding.id}` : null;
+  const pushCaret = useCallback((field: string, offset: number) => {
+    live.pushCursor(field, offset);
+    if (caretStorageKey) {
+      try { sessionStorage.setItem(caretStorageKey, JSON.stringify({ field, offset, ts: Date.now() })); } catch { /* ignore */ }
+    }
+  }, [live, caretStorageKey]);
 
-        // Remote typing indicator — IGNORE our own echo (don't show ourselves)
-        if (data.type === 'typing' && data.userId === myUserId.current) return;
-        if (data.type === 'typing') {
-          setFieldTypers(prev => {
-            const next = { ...prev };
-            if (data.field === null) {
-              delete next[`${data.userId}`];
-            } else {
-              next[`${data.userId}_${data.field}`] = { userName: data.userName, userColor: data.userColor };
-            }
-            return next;
-          });
-          // Auto-expire after 3.5s
-          if (data.field !== null) {
-            const key = `${data.userId}_${data.field}`;
-            const existing = typingThrottle.current[`expire_${key}`];
-            if (existing) clearTimeout(existing);
-            typingThrottle.current[`expire_${key}`] = setTimeout(() => {
-              setFieldTypers(prev => {
-                const next = { ...prev };
-                delete next[key];
-                return next;
-              });
-            }, 3500);
+  // After a reload, restore the saved caret: switch to the right tab, place
+  // the selection, and broadcast it so others see it too.
+  useEffect(() => {
+    if (!isEditing || !finding?.id || !caretStorageKey) return;
+    let saved: { field: string; offset: number } | null = null;
+    try {
+      const raw = sessionStorage.getItem(caretStorageKey);
+      if (raw) saved = JSON.parse(raw);
+    } catch { /* ignore */ }
+    if (!saved) return;
+    const { field, offset } = saved;
+    const t = setTimeout(() => {
+      const tab = (['description', 'reproduction', 'impact', 'remediation', 'references'] as const)
+        .find(f => f === field);
+      if (tab) {
+        setEditorTab('Write');
+        setFieldTab((tab.charAt(0).toUpperCase() + tab.slice(1)) as FieldTab);
+      }
+      requestAnimationFrame(() => {
+        if (tab) {
+          const ta = textareaRef.current;
+          if (ta) {
+            ta.focus();
+            const max = ta.value.length;
+            ta.setSelectionRange(Math.min(offset, max), Math.min(offset, max));
+          }
+        } else if (field === 'title') {
+          titleRef.current?.focus();
+          if (titleRef.current) {
+            const max = titleRef.current.value.length;
+            titleRef.current.setSelectionRange(Math.min(offset, max), Math.min(offset, max));
           }
         }
-
-        // Remote field update — apply if we're not editing that field
-        if (data.type === 'field_update' && data.fields) {
-          const f = data.fields as Record<string, unknown>;
-          if (f.title !== undefined)       setTitle(String(f.title));
-          if (f.severity !== undefined)    setSeverity(String(f.severity));
-          if (f.status !== undefined)      setStatus(String(f.status));
-          if (f.cwe !== undefined)         setCwe(String(f.cwe));
-          if (f.owasp !== undefined)       setOwasp(String(f.owasp));
-          if (f.description !== undefined) setDescription(String(f.description));
-          if (f.reproduction !== undefined)setReproduction(String(f.reproduction));
-          if (f.impact !== undefined)      setImpact(String(f.impact));
-          if (f.remediation !== undefined) setRemediation(String(f.remediation));
-          if (f.references !== undefined)  setReferences(String(f.references));
-        }
-      } catch { /* ignore */ }
-    };
-
-    return () => { es.close(); };
+        live.pushCursor(field, offset);
+      });
+    }, 900);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding?.id, isEditing]);
 
-  // Broadcast typing state for a given field (throttled to every 2s)
-  function broadcastTyping(field: string) {
-    if (!finding?.id) return;
-    const key = `throttle_${field}`;
-    if (typingThrottle.current[key]) return;
-    fetch(`/api/collab/finding:${finding.id}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field }),
-    }).catch(() => {});
-    typingThrottle.current[key] = setTimeout(() => {
-      delete typingThrottle.current[key];
-    }, 2000);
-  }
+  // Map a live field key → the editor's setter.
+  const applyRemoteField = useCallback((field: string, value: string) => {
+    switch (field) {
+      case 'title':        setTitle(value); break;
+      case 'summary':      break; // not edited in this UI
+      case 'description':  setDescription(value); break;
+      case 'reproduction': setReproduction(value); break;
+      case 'impact':       setImpact(value); break;
+      case 'remediation':  setRemediation(value); break;
+      case 'references':   setReferences(value); break;
+      case 'cwe':          setCwe(value); break;
+      case 'owasp':        setOwasp(value); break;
+      case 'severity':     setSeverity(value); break;
+      case 'status':       setStatus(value); break;
+      case 'assets':       setAffectedAssets(value); break;
+    }
+  }, []);
 
-  // Helper: get typers for a field across all users (used by the "X is editing" pill)
-  function getTypersForField(field: string): { userName: string; userColor: string }[] {
-    return Object.entries(fieldTypers)
-      .filter(([k]) => k.endsWith(`_${field}`))
-      .map(([, v]) => v);
-  }
+  // Subscribe to live events: remote docs, initial snapshot, committed saves.
+  useEffect(() => {
+    if (!finding?.id || !isEditing) return;
+    const unsub = live.onEvent((e) => {
+      if (e.type === 'doc') {
+        if (e.field === myActiveFieldRef.current) return; // we're typing there
+        applyRemoteField(e.field, e.value);
+      } else if (e.type === 'snapshot') {
+        const f = e.doc.fields;
+        for (const [k, v] of Object.entries(f)) {
+          if (k === myActiveFieldRef.current) continue;
+          applyRemoteField(k, v.value);
+        }
+      } else if (e.type === 'commit') {
+        if (e.updatedAt) setBaseUpdatedAt(e.updatedAt);
+        for (const [k, v] of Object.entries(e.fields)) {
+          if (k === myActiveFieldRef.current) continue;
+          if (typeof v === 'string') applyRemoteField(k, v);
+        }
+      }
+    });
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finding?.id, isEditing, live.onEvent]);
 
-  // AI generate finding — partial generation supported via the `sections` arg.
+  // ── Remote carets for a field (from the live cursor stream) ───────────────
+  const caretsFor = useCallback((field: string) => {
+    return Object.values(live.cursors)
+      .filter(c => c.field === field && c.userId !== live.selfId)
+      .map(c => ({ key: c.userId, color: c.color, name: c.name, offset: c.offset }));
+  }, [live.cursors, live.selfId]);
+
+  // "X is editing this field" pills (roster + remote cursors)
+  const typersForField = useCallback((field: string) => {
+    const fromRoster = live.roster
+      .filter(u => u.field === field && u.id !== live.selfId)
+      .map(u => ({ userName: u.name, userColor: u.color }));
+    const fromCursors = Object.values(live.cursors)
+      .filter(c => c.field === field && c.userId !== live.selfId)
+      .map(c => ({ userName: c.name, userColor: c.color }));
+    const merged = new Map<string, { userName: string; userColor: string }>();
+    for (const t of [...fromRoster, ...fromCursors]) merged.set(t.userName, t);
+    return Array.from(merged.values());
+  }, [live.roster, live.cursors, live.selfId]);
+
+  // ── AI generate finding — partial generation supported via the `sections` arg.
   // - undefined / empty → fill ALL fields (metadata + content + cvss)
   // - subset → fill only those long-form text fields, leave everything else untouched
   type AISection = 'title' | 'description' | 'reproduction' | 'impact' | 'remediation' | 'references' | 'metadata';
@@ -554,6 +628,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             description,
             reproduction,
             assets: affectedAssets,
+            // Evidence-aware writing: give the model the screenshot ids/captions
+            // so generated text references the real figures inline.
+            evidence: evidence
+              .filter(e => e.content)
+              .map(e => ({ id: e.id, caption: e.caption || e.filename })),
           },
         }),
       });
@@ -643,10 +722,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
   // Insert at cursor
   function insertAtCursor(text:string) {
     const ta=textareaRef.current;
-    if(!ta){ setCurrentValue(currentValue()+text); return; }
+    if(!ta){ setCurrentValue(currentValue()+text); live.pushEdit(fieldTab.toLowerCase(), currentValue()+text); return; }
     const s=ta.selectionStart, e=ta.selectionEnd;
     const next=currentValue().slice(0,s)+text+currentValue().slice(e);
     setCurrentValue(next);
+    live.pushEdit(fieldTab.toLowerCase(), next);
     requestAnimationFrame(()=>{ ta.focus(); ta.setSelectionRange(s+text.length,s+text.length); });
   }
 
@@ -750,11 +830,11 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
     setError(''); setSaving(true);
     try {
       if(isEditing && finding?.id) {
-        // Optimistic locking: send the updatedAt token we originally loaded.
-        // The server will 409 if someone else has saved since.
-        const expectedUpdatedAt = (finding as { updatedAt?: string | Date | null } | undefined)?.updatedAt;
-        const expectedIso = expectedUpdatedAt instanceof Date ? expectedUpdatedAt.toISOString() :
-                           (typeof expectedUpdatedAt === 'string' ? expectedUpdatedAt : undefined);
+        // Optimistic locking: send the updatedAt token we last saw. The token
+        // refreshes after every successful save AND after committed broadcasts,
+        // so saving twice in a row works. The server only 409s when another
+        // user's committed changes would actually be clobbered — and then it
+        // returns the latest values so we can offer a real merge choice.
         const res = await fetch(`/api/findings/${finding.id}`,{
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body:JSON.stringify({
@@ -763,17 +843,58 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             cvss:cvssScore,
             cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
             cvssLocked,
-            expectedUpdatedAt: expectedIso,
+            expectedUpdatedAt: baseUpdatedAt,
           }),
         });
         if (res.status === 409) {
-          const d = await res.json().catch(() => ({} as { message?: string }));
+          const d = await res.json().catch(() => ({} as Record<string, unknown>));
+          const current = (d.current || null) as Record<string, unknown> | null;
+          const currentUpdatedAt = typeof d.currentUpdatedAt === 'string' ? d.currentUpdatedAt : null;
+          if (current && currentUpdatedAt) {
+            // Real concurrent conflict — offer a merge choice.
+            setConflictInfo({
+              updatedAt: currentUpdatedAt,
+              fields: Object.entries(current).filter(([, v]) => typeof v === 'string') as [string, string][],
+              resolve: async (keepMine: boolean) => {
+                if (keepMine) {
+                  // Force overwrite without the token.
+                  const r2 = await fetch(`/api/findings/${finding.id}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      title,severity,status,cwe,owasp,description,reproduction,impact,remediation,references,
+                      assets:affectedAssets.split('\n').map(a=>a.trim()).filter(Boolean),
+                      cvss:cvssScore,
+                      cvssVector:`AV:${cvss.AV}/AC:${cvss.AC}/PR:${cvss.PR}/UI:${cvss.UI}/S:${cvss.S}/C:${cvss.C}/I:${cvss.I}/A:${cvss.A}`,
+                      cvssLocked,
+                    }),
+                  });
+                  const d2 = await r2.json().catch(() => ({} as { finding?: { updatedAt?: string } }));
+                  if (r2.ok) {
+                    setBaseUpdatedAt(d2.finding?.updatedAt ?? currentUpdatedAt);
+                    setSaved(true); setTimeout(()=>setSaved(false),2500);
+                    toast.success('Saved (yours kept)', { description: 'Your version was written over the remote changes.' });
+                  } else {
+                    toast.error('Save failed', { description: `HTTP ${r2.status}` });
+                  }
+                } else {
+                  // Load latest: adopt the server's committed values.
+                  for (const [k, v] of Object.entries(current)) applyRemoteField(k, String(v));
+                  setBaseUpdatedAt(currentUpdatedAt);
+                  toast.info('Loaded latest version', { description: 'Your unsaved edits to those fields were discarded.' });
+                }
+              },
+            });
+            return;
+          }
           toast.error('Conflict — somebody else edited this finding', {
-            description: d.message || 'Refresh to see the latest version before saving again.',
+            description: d.message ? String(d.message) : 'Refresh to see the latest version before saving again.',
           });
           return;
         }
         if (!res.ok) { toast.error('Save failed', { description: `HTTP ${res.status}` }); return; }
+        const data = await res.json().catch(() => ({} as { finding?: { updatedAt?: string } }));
+        const newToken = data.finding?.updatedAt;
+        if (newToken) setBaseUpdatedAt(newToken);
         setSaved(true); setTimeout(()=>setSaved(false),2500);
         toast.success('Finding saved', { description: title });
       } else {
@@ -821,32 +942,112 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
 
       {/* Title */}
       <div style={{padding:'14px 20px',borderBottom:'1px solid var(--line-1)',background:'var(--bg-0)',flexShrink:0,display:'flex',alignItems:'center',gap:12}}>
-        <input
-          value={title} onChange={e=>{ setTitle(e.target.value); broadcastTyping('title'); }}
-          placeholder="Finding title…"
-          autoFocus
-          style={{flex:1,fontSize:18,fontWeight:500,color:'var(--ink-0)',background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}
-        />
-        {/* Watch button — only meaningful for existing findings */}
+        <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+          <input
+            ref={titleRef}
+            value={title} onChange={e=>{ setTitle(e.target.value); live.pushEdit('title', e.target.value); pushCaret('title', e.target.selectionStart ?? e.target.value.length); }}
+            onFocus={()=>setMyActive('title')}
+            onBlur={()=>{ setMyActive(null); live.pushCursor('title', null); live.pushEdit('title', title); }}
+            onKeyUp={e=>pushCaret('title', e.currentTarget.selectionStart ?? title.length)}
+            onClick={e=>pushCaret('title', e.currentTarget.selectionStart ?? title.length)}
+            placeholder="Finding title…"
+            autoFocus
+            style={{width:'100%',fontSize:18,fontWeight:500,color:'var(--ink-0)',background:'transparent',border:'none',outline:'none',fontFamily:'inherit'}}
+          />
+          <RemoteCarets text={title} carets={caretsFor('title')} controlRef={titleRef} singleLine />
+        </div>
+        {/* Watch button + roster popover — only meaningful for existing findings */}
+        {isEditing && finding?.id && (
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={toggleWatch}
+              disabled={watchBusy}
+              title={watching ? 'Stop watching this finding' : 'Watch this finding for status / severity / assignee / comment changes'}
+              className="btn btn-sm"
+              style={{
+                background: watching ? 'rgba(143,201,122,0.18)' : 'transparent',
+                border: `1px solid ${watching ? 'rgba(143,201,122,0.45)' : 'var(--line-2)'}`,
+                color: watching ? 'var(--status-resolved)' : 'var(--ink-2)',
+                fontWeight: 600, gap: 5,
+              }}
+            >
+              <Ico name="eye" size={12} />
+              {watching ? 'Watching' : 'Watch'}
+              {watchCount > 0 && (
+                <span style={{ fontSize: 10, opacity: 0.7, fontFamily: 'var(--font-mono)' }}>· {watchCount}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setWatchOpen(v => !v)}
+              title="Who is watching?"
+              className="btn btn-sm btn-ghost"
+              style={{ padding: '4px 6px', marginLeft: 2, gap: 4 }}
+            >
+              <Ico name="chevDown" size={11} />
+            </button>
+            {watchOpen && (
+              <>
+                <div onClick={() => setWatchOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50,
+                  width: 260, background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+                  borderRadius: 'var(--r-sm)', boxShadow: '0 10px 30px rgba(0,0,0,.35)', padding: 12,
+                }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 4 }}>
+                    Watching
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', lineHeight: 1.55, marginBottom: 10 }}>
+                    Watching notifies you (in-app + badge) when this finding&apos;s status, severity,
+                    assignee or comments change. Changes made by you don&apos;t notify you.
+                  </div>
+                  <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink-3)', letterSpacing: '.06em', marginBottom: 6 }}>
+                    {watchCount} WATCHER{watchCount === 1 ? '' : 'S'}
+                  </div>
+                  {watchNames.length === 0 ? (
+                    <div style={{ fontSize: 11.5, color: 'var(--ink-3)', fontStyle: 'italic', marginBottom: 8 }}>
+                      Nobody else is watching this finding.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                      {watchNames.map(w => (
+                        <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-1)' }}>
+                          <span style={{
+                            width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+                            background: 'var(--accent)', color: '#fff', fontSize: 9, fontWeight: 700,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          }}>{w.initials || w.name.slice(0, 2).toUpperCase()}</span>
+                          {w.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={toggleWatch}
+                    disabled={watchBusy}
+                    className="btn btn-sm"
+                    style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+                  >
+                    {watching ? 'Stop watching' : 'Watch this finding'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        {/* AI Chat button — private per-finding conversation */}
         {isEditing && finding?.id && (
           <button
             type="button"
-            onClick={toggleWatch}
-            disabled={watchBusy}
-            title={watching ? 'Stop watching this finding' : 'Watch this finding for status / severity / comment changes'}
-            className="btn btn-sm"
-            style={{
-              background: watching ? 'rgba(143,201,122,0.18)' : 'transparent',
-              border: `1px solid ${watching ? 'rgba(143,201,122,0.45)' : 'var(--line-2)'}`,
-              color: watching ? 'var(--status-resolved)' : 'var(--ink-2)',
-              fontWeight: 600, gap: 5,
-            }}
+            onClick={() => setChatOpen(true)}
+            title="Chat with the AI about this finding (private)"
+            className="btn btn-sm btn-ghost"
+            style={{ gap: 5 }}
           >
-            <Ico name="eye" size={12} />
-            {watching ? 'Watching' : 'Watch'}
-            {watchCount > 0 && (
-              <span style={{ fontSize: 10, opacity: 0.7, fontFamily: 'var(--font-mono)' }}>· {watchCount}</span>
-            )}
+            <Ico name="message" size={12} />
+            Chat
           </button>
         )}
         {/* AI Generate split-button — main click fills the whole finding;
@@ -982,7 +1183,17 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
               >
                 <span className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', minWidth: 56 }}>{m.code}</span>
                 <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.title}</span>
-                <span style={{ fontSize: 10, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{m.project.code}</span>
+                {m.recurring ? (
+                  <span style={{
+                    fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--sev-high)',
+                    background: 'rgba(192,57,43,.1)', border: '1px solid rgba(192,57,43,.3)',
+                    borderRadius: 100, padding: '1px 8px', whiteSpace: 'nowrap',
+                  }} title="Same finding was filed in a previous engagement of this client">
+                    ↻ Recurring{m.engagementYear ? ` · ${m.engagementYear}` : ''}
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 10, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>{m.project.code}</span>
+                )}
                 <span style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', minWidth: 36, textAlign: 'right' }}>{Math.round(m.score * 100)}%</span>
               </a>
             ))}
@@ -1007,19 +1218,29 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           {/* Field tabs */}
           <div style={{display:'flex',padding:'0 16px',borderBottom:'1px solid var(--line-1)',background:'var(--bg-1)',flexShrink:0}}>
             {FIELD_TABS.map(t=>(
-              <button key={t} onClick={()=>setFieldTab(t)} style={{
+              <button key={t} onClick={()=>{ setFieldTab(t); if (editorTab==='Write') setMyActive(t.toLowerCase()); }} style={{
                 padding:'11px 13px',background:'transparent',border:'none',
                 borderBottom:`2px solid ${fieldTab===t?'var(--ink-0)':'transparent'}`,
                 color:fieldTab===t?'var(--ink-0)':'var(--ink-2)',
                 fontSize:13,cursor:'pointer',marginBottom:-1,transition:'color .1s',
-              }}>{t}</button>
+                position:'relative',
+              }}>
+                {t}
+                {typersForField(t.toLowerCase()).length > 0 && (
+                  <span style={{
+                    display:'inline-block', width:6, height:6, borderRadius:'50%',
+                    background: typersForField(t.toLowerCase())[0].userColor,
+                    marginLeft:6, verticalAlign:'middle',
+                  }} title={`${typersForField(t.toLowerCase()).map(x=>x.userName).join(', ')} editing`} />
+                )}
+              </button>
             ))}
           </div>
 
           {/* Write/Preview + toolbar */}
           <div style={{display:'flex',alignItems:'center',gap:4,padding:'6px 16px',borderBottom:'1px solid var(--line-1)',background:'var(--bg-0)',flexShrink:0}}>
             {(['Write','Preview'] as const).map(t=>(
-              <button key={t} onClick={()=>setEditorTab(t)} style={{
+              <button key={t} onClick={()=>{ setEditorTab(t); if (t==='Preview') setMyActive(null); }} style={{
                 padding:'5px 10px',borderRadius:'var(--r-xs)',
                 background:editorTab===t?'var(--bg-2)':'transparent',
                 border:`1px solid ${editorTab===t?'var(--line-2)':'transparent'}`,
@@ -1044,7 +1265,13 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           {/* Editor/Preview area — with drag-and-drop zone */}
           <div
             className="thin-scroll"
-            style={{flex:1,overflow:'auto',minHeight:0,position:'relative'}}
+            style={{
+              flex: 1, minHeight: 0, position: 'relative',
+              display: 'flex', flexDirection: 'column',
+              // In Write mode the textarea fills the whole area (and scrolls
+              // internally); Preview mode scrolls the container.
+              overflow: editorTab === 'Write' ? 'hidden' : 'auto',
+            }}
             onDragOver={editorTab==='Write'?handleDragOver:undefined}
             onDragLeave={editorTab==='Write'?handleDragLeave:undefined}
             onDrop={editorTab==='Write'?handleDrop:undefined}
@@ -1068,7 +1295,7 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
             {editorTab==='Write' ? (
               <>
                 {(() => {
-                  const fieldTypersList = getTypersForField(fieldTab.toLowerCase());
+                  const fieldTypersList = typersForField(fieldTab.toLowerCase());
                   if (fieldTypersList.length === 0) return null;
                   return (
                     <div style={{ padding: '5px 24px', background: 'var(--bg-1)', borderBottom: '1px solid var(--line-1)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1084,24 +1311,45 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
                         </span>
                       ))}
                       <span style={{ fontSize: 10.5, color: 'var(--ink-3)', fontStyle: 'italic' }}>
-                        editing {fieldTab}
+                        {myActiveField === fieldTab.toLowerCase() ? 'you + ' : ''}editing {fieldTab}
                       </span>
                     </div>
                   );
                 })()}
-                <textarea
-                  ref={textareaRef}
-                  value={currentValue()}
-                  onChange={e=>{ setCurrentValue(e.target.value); broadcastTyping(fieldTab.toLowerCase()); }}
-                  onPaste={handlePaste}
-                  placeholder={`Write ${fieldTab.toLowerCase()} in Markdown…\n\nTip: paste or drag-and-drop screenshots — they'll upload automatically and insert a reference.`}
-                  style={{
-                    display:'block',width:'100%',height:'100%',minHeight:240,
-                    padding:'20px 24px',background:'var(--bg-0)',border:'none',outline:'none',
-                    color:'var(--ink-1)',fontFamily:'var(--font-mono)',fontSize:13.5,
-                    lineHeight:1.75,resize:'none',boxSizing:'border-box',
-                  }}
-                />
+                <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+                  <textarea
+                    ref={textareaRef}
+                    value={currentValue()}
+                    onChange={e=>{
+                      const v = e.target.value;
+                      setCurrentValue(v);
+                      const k = fieldTab.toLowerCase();
+                      live.pushEdit(k, v);
+                      pushCaret(k, e.target.selectionStart ?? v.length);
+                    }}
+                    onFocus={()=>setMyActive(fieldTab.toLowerCase())}
+                    onBlur={()=>{
+                      setMyActive(null);
+                      live.pushCursor(fieldTab.toLowerCase(), null);
+                      live.pushEdit(fieldTab.toLowerCase(), currentValue());
+                    }}
+                    onSelect={e=>pushCaret(fieldTab.toLowerCase(), (e.target as HTMLTextAreaElement).selectionStart ?? currentValue().length)}
+                    onKeyUp={e=>pushCaret(fieldTab.toLowerCase(), e.currentTarget.selectionStart ?? currentValue().length)}
+                    onPaste={handlePaste}
+                    placeholder={`Write ${fieldTab.toLowerCase()} in Markdown…\n\nTip: paste or drag-and-drop screenshots — they'll upload automatically and insert a reference.`}
+                    style={{
+                      display:'block',width:'100%',height:'100%',minHeight:240,
+                      padding:'20px 24px',background:'var(--bg-0)',border:'none',outline:'none',
+                      color:'var(--ink-1)',fontFamily:'var(--font-mono)',fontSize:13.5,
+                      lineHeight:1.75,resize:'none',boxSizing:'border-box',
+                    }}
+                  />
+                  <RemoteCarets
+                    text={currentValue()}
+                    carets={caretsFor(fieldTab.toLowerCase())}
+                    controlRef={textareaRef}
+                  />
+                </div>
               </>
             ) : (
               <div
@@ -1261,17 +1509,29 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
                 <div className="form-group">
                   <label className="form-label">CWE</label>
-                  <input className="input" value={cwe} onChange={e=>setCwe(e.target.value)} placeholder="CWE-79" style={{width:'100%'}}/>
+                  <input className="input" value={cwe}
+                    onChange={e=>{ setCwe(e.target.value); live.pushEdit('cwe', e.target.value); pushCaret('cwe', e.target.selectionStart ?? e.target.value.length); }}
+                    onFocus={()=>setMyActive('cwe')}
+                    onBlur={()=>{ setMyActive(null); live.pushEdit('cwe', cwe); }}
+                    placeholder="CWE-79" style={{width:'100%'}}/>
                 </div>
                 <div className="form-group">
                   <label className="form-label">OWASP</label>
-                  <input className="input" value={owasp} onChange={e=>setOwasp(e.target.value)} placeholder="A03:2021" style={{width:'100%'}}/>
+                  <input className="input" value={owasp}
+                    onChange={e=>{ setOwasp(e.target.value); live.pushEdit('owasp', e.target.value); pushCaret('owasp', e.target.selectionStart ?? e.target.value.length); }}
+                    onFocus={()=>setMyActive('owasp')}
+                    onBlur={()=>{ setMyActive(null); live.pushEdit('owasp', owasp); }}
+                    placeholder="A03:2021" style={{width:'100%'}}/>
                 </div>
               </div>
 
               <div className="form-group">
                 <label className="form-label">Affected Assets</label>
-                <textarea className="input" value={affectedAssets} onChange={e=>setAffectedAssets(e.target.value)} placeholder="One per line" style={{width:'100%',fontFamily:'var(--font-mono)',fontSize:11,minHeight:70,resize:'vertical'}}/>
+                <textarea className="input" value={affectedAssets}
+                  onChange={e=>{ setAffectedAssets(e.target.value); live.pushEdit('assets', e.target.value); pushCaret('assets', e.target.selectionStart ?? e.target.value.length); }}
+                  onFocus={()=>setMyActive('assets')}
+                  onBlur={()=>{ setMyActive(null); live.pushEdit('assets', affectedAssets); }}
+                  placeholder="One per line" style={{width:'100%',fontFamily:'var(--font-mono)',fontSize:11,minHeight:70,resize:'vertical'}}/>
               </div>
 
             </div>
@@ -1406,8 +1666,38 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           {/* Save */}
           <div style={{padding:'14px 18px',borderTop:'1px solid var(--line-1)',background:'var(--bg-1)',position:'sticky',bottom:0,marginTop:'auto'}}>
             {isEditing && finding?.id && (
-              <div style={{marginBottom:10}}>
-                <LivePresence entity={`finding:${finding.id}`} />
+              <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, minHeight: 26 }}>
+                {(() => {
+                  const others = live.roster.filter(u => u.id !== live.selfId);
+                  if (others.length === 0 && !live.connected) return null;
+                  return (
+                    <>
+                      {live.connected && others.length === 0 ? (
+                        <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>Live — you&apos;re the only one here</span>
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            {others.slice(0, 5).map(u => (
+                              <span key={u.id} title={u.field ? `${u.name} editing ${u.field}` : u.name} style={{
+                                width: 26, height: 26, borderRadius: '50%', marginLeft: u.id !== others[0]?.id ? -8 : 0,
+                                background: u.color, border: '2px solid var(--bg-1)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 10, fontWeight: 700, color: '#fff',
+                              }}>
+                                {u.initials || u.name.slice(0, 2).toUpperCase()}
+                              </span>
+                            ))}
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                            {others.length === 1
+                              ? `${others[0].name}${others[0].field ? ` editing ${others[0].field}` : ' is here'}`
+                              : `${others.length} others here`}
+                          </span>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
             <button
@@ -1421,6 +1711,54 @@ export function UnifiedFindingEditor({ finding, assets=[], projectId, isEditing=
           </div>
         </div>
       </div>
+
+      {/* ── Per-finding AI chat drawer ── */}
+      {chatOpen && finding?.id && (
+        <FindingChat
+          findingId={finding.id}
+          findingCode={(finding as { code?: string }).code || ''}
+          projectId={projectId}
+          onClose={() => setChatOpen(false)}
+        />
+      )}
+
+      {/* ── Save-conflict merge modal ── */}
+      {conflictInfo && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.55)' }}>
+          <div style={{
+            width: 460, maxWidth: '92vw', background: 'var(--bg-1)', border: '1px solid var(--line-2)',
+            borderRadius: 'var(--r-md)', boxShadow: '0 20px 60px rgba(0,0,0,.5)', padding: 22,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 20 }}>⚠️</span>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--ink-0)' }}>Concurrent edits detected</h3>
+            </div>
+            <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.6 }}>
+              Someone else saved changes to this finding after you loaded it. These fields differ from what
+              you&apos;re about to save:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
+              {conflictInfo.fields.map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span className="mono" style={{ color: 'var(--ink-3)', minWidth: 110, textTransform: 'capitalize' }}>{k.replace(/([A-Z])/g, ' $1')}</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink-1)' }}>
+                    {v || <em style={{ color: 'var(--ink-3)' }}>(empty)</em>}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setConflictInfo(null)} style={{ fontSize: 12.5 }}>Cancel</button>
+              <button className="btn" onClick={() => { conflictInfo.resolve(false); setConflictInfo(null); }} style={{ fontSize: 12.5 }}>
+                Load latest (discard mine)
+              </button>
+              <button className="btn btn-primary" onClick={() => { conflictInfo.resolve(true); setConflictInfo(null); }} style={{ fontSize: 12.5 }}>
+                Keep mine (overwrite)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

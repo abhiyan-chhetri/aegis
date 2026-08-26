@@ -104,6 +104,17 @@ ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "assetOwners"          TEXT    NO
 ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "targetCode"           TEXT    NOT NULL DEFAULT '';
 ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementYear"       TEXT    NOT NULL DEFAULT '';
 ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "previousEngagementId" TEXT    DEFAULT NULL;
+-- v2.0 environmental CVSS columns (schema-declared)
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "dataClassification"   TEXT    NOT NULL DEFAULT 'C3';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "criticality"          TEXT    NOT NULL DEFAULT 'silver';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "engagementType"       TEXT    NOT NULL DEFAULT 'external';
+ALTER TABLE "Finding" ADD COLUMN IF NOT EXISTS "cvssLocked"           BOOLEAN NOT NULL DEFAULT false;
+-- v2.3 report content sections
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "keySecurityStrengths"      TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "keyAreasForImprovement"    TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "immediateActions"          TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "shortTermImprovements"     TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "longTermRecommendations"   TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS "Activity" (
   id TEXT PRIMARY KEY,
   "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
@@ -127,6 +138,244 @@ CREATE TABLE IF NOT EXISTS "FindingComment" (
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS "FindingComment_findingId_idx" ON "FindingComment"("findingId");
+-- v2.2 notifications + watchers
+CREATE TABLE IF NOT EXISTS "Notification" (
+  id TEXT PRIMARY KEY,
+  "userId"    TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  type        TEXT NOT NULL,
+  title       TEXT NOT NULL DEFAULT '',
+  body        TEXT NOT NULL DEFAULT '',
+  link        TEXT NOT NULL DEFAULT '',
+  "actorId"   TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+  "findingId" TEXT REFERENCES "Finding"(id) ON DELETE CASCADE,
+  read        BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "Notification_userId_read_idx" ON "Notification"("userId", read);
+CREATE TABLE IF NOT EXISTS "FindingWatcher" (
+  "findingId" TEXT NOT NULL REFERENCES "Finding"(id) ON DELETE CASCADE,
+  "userId"    TEXT NOT NULL REFERENCES "User"(id)    ON DELETE CASCADE,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("findingId", "userId")
+);
+-- ══ Burp Bridge + AI chat + perf (v3.0+) — idempotent, NEVER drops data ══
+
+-- AI chat (per-user private conversations, optionally scoped to a finding)
+CREATE TABLE IF NOT EXISTS "Chat" (
+  id TEXT PRIMARY KEY,
+  "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  "findingId" TEXT REFERENCES "Finding"(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'general',
+  title TEXT NOT NULL DEFAULT 'New chat',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "Chat_userId_idx" ON "Chat"("userId");
+CREATE INDEX IF NOT EXISTS "Chat_findingId_idx" ON "Chat"("findingId");
+
+CREATE TABLE IF NOT EXISTS "ChatMessage" (
+  id TEXT PRIMARY KEY,
+  "chatId" TEXT NOT NULL REFERENCES "Chat"(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  "inputTokens" INTEGER NOT NULL DEFAULT 0,
+  "outputTokens" INTEGER NOT NULL DEFAULT 0,
+  cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "ChatMessage_chatId_idx" ON "ChatMessage"("chatId");
+
+CREATE TABLE IF NOT EXISTS "AiUsageLog" (
+  id TEXT PRIMARY KEY,
+  "userId" TEXT,
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  feature TEXT NOT NULL DEFAULT '',
+  "inputTokens" INTEGER NOT NULL DEFAULT 0,
+  "outputTokens" INTEGER NOT NULL DEFAULT 0,
+  cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "AiUsageLog_createdAt_idx" ON "AiUsageLog"("createdAt");
+
+-- Burp Bridge project settings
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "burpScope" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "burpRetentionDays" INTEGER NOT NULL DEFAULT 90;
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "burpCaptureRules" TEXT NOT NULL DEFAULT '{}';
+
+-- Engagement keys (Burp extension auth — hash-only storage)
+CREATE TABLE IF NOT EXISTS "EngagementKey" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  "keyHash" TEXT NOT NULL,
+  "keyPrefix" TEXT NOT NULL DEFAULT '',
+  label TEXT NOT NULL DEFAULT 'Burp extension',
+  "lastUsedAt" TIMESTAMP(3),
+  "revokedAt" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "EngagementKey_projectId_idx" ON "EngagementKey"("projectId");
+CREATE INDEX IF NOT EXISTS "EngagementKey_keyHash_idx" ON "EngagementKey"("keyHash");
+
+-- Captured traffic (raw headers incl. cookies — replay + session flows)
+CREATE TABLE IF NOT EXISTS "BurpTraffic" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  sha256 TEXT NOT NULL,
+  method TEXT NOT NULL,
+  url TEXT NOT NULL,
+  host TEXT NOT NULL,
+  path TEXT NOT NULL DEFAULT '',
+  "pathNoQuery" TEXT NOT NULL DEFAULT '',
+  query TEXT NOT NULL DEFAULT '',
+  "statusCode" INTEGER NOT NULL DEFAULT 0,
+  "contentType" TEXT NOT NULL DEFAULT '',
+  "requestHeaders" TEXT NOT NULL DEFAULT '',
+  "requestBody" TEXT NOT NULL DEFAULT '',
+  "responseHeaders" TEXT NOT NULL DEFAULT '',
+  "responseBody" TEXT NOT NULL DEFAULT '',
+  tool TEXT NOT NULL DEFAULT 'proxy',
+  "sizeBytes" INTEGER NOT NULL DEFAULT 0,
+  truncated BOOLEAN NOT NULL DEFAULT false,
+  "scopeOk" BOOLEAN NOT NULL DEFAULT true,
+  "isSession" BOOLEAN NOT NULL DEFAULT false,
+  anomalies TEXT NOT NULL DEFAULT '[]',
+  secrets TEXT NOT NULL DEFAULT '[]',
+  "findingId" TEXT REFERENCES "Finding"(id) ON DELETE SET NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "BurpTraffic_projectId_sha256_key" ON "BurpTraffic"("projectId", sha256);
+CREATE INDEX IF NOT EXISTS "BurpTraffic_projectId_createdAt_idx" ON "BurpTraffic"("projectId", "createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "BurpTraffic_projectId_findingId_idx" ON "BurpTraffic"("projectId", "findingId");
+CREATE INDEX IF NOT EXISTS "BurpTraffic_host_pathNoQuery_idx" ON "BurpTraffic"(host, "pathNoQuery");
+CREATE INDEX IF NOT EXISTS "BurpTraffic_projectId_host_method_created_idx" ON "BurpTraffic"("projectId", host, method, "createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "BurpTraffic_projectId_contentType_idx" ON "BurpTraffic"("projectId", "contentType");
+CREATE INDEX IF NOT EXISTS "BurpTraffic_projectId_isSession_idx" ON "BurpTraffic"("projectId", "isSession");
+
+-- Fast ILIKE search at scale (pg_trgm GIN indexes)
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS "BurpTraffic_url_trgm" ON "BurpTraffic" USING gin (url gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS "BurpTraffic_path_trgm" ON "BurpTraffic" USING gin ("pathNoQuery" gin_trgm_ops);
+
+-- Normalized endpoint inventory
+CREATE TABLE IF NOT EXISTS "BurpEndpoint" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  method TEXT NOT NULL,
+  host TEXT NOT NULL,
+  path TEXT NOT NULL,
+  "sampleUrl" TEXT NOT NULL DEFAULT '',
+  "hitCount" INTEGER NOT NULL DEFAULT 0,
+  "statusCodes" TEXT NOT NULL DEFAULT '[]',
+  "firstSeenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "lastSeenAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "isJsAsset" BOOLEAN NOT NULL DEFAULT false,
+  anomalies TEXT NOT NULL DEFAULT '[]',
+  "testedCount" INTEGER NOT NULL DEFAULT 0,
+  "succeededCount" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "BurpEndpoint_projectId_method_host_path_key" ON "BurpEndpoint"("projectId", method, host, path);
+CREATE INDEX IF NOT EXISTS "BurpEndpoint_projectId_lastSeenAt_idx" ON "BurpEndpoint"("projectId", "lastSeenAt" DESC);
+
+-- AI attack checklist (evidence-based, auto-confirmed, bypass playbook)
+CREATE TABLE IF NOT EXISTS "BurpChecklistItem" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  "endpointId" TEXT REFERENCES "BurpEndpoint"(id) ON DELETE CASCADE,
+  "parentId" TEXT REFERENCES "BurpChecklistItem"(id) ON DELETE CASCADE,
+  category TEXT NOT NULL,
+  technique TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  payload TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'untested',
+  "resultNote" TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'ai',
+  "autoMarkedBy" TEXT NOT NULL DEFAULT '',
+  "order" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "BurpChecklistItem_projectId_status_idx" ON "BurpChecklistItem"("projectId", status);
+CREATE INDEX IF NOT EXISTS "BurpChecklistItem_projectId_category_idx" ON "BurpChecklistItem"("projectId", category);
+CREATE INDEX IF NOT EXISTS "BurpChecklistItem_projectId_source_idx" ON "BurpChecklistItem"("projectId", source);
+
+-- Interesting rail pins (reference a traffic row OR a checklist item)
+CREATE TABLE IF NOT EXISTS "BurpPin" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  "trafficId" TEXT REFERENCES "BurpTraffic"(id) ON DELETE CASCADE,
+  "checklistItemId" TEXT REFERENCES "BurpChecklistItem"(id) ON DELETE CASCADE,
+  "userId" TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  note TEXT NOT NULL DEFAULT '',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "BurpPin_projectId_idx" ON "BurpPin"("projectId");
+CREATE INDEX IF NOT EXISTS "BurpPin_checklistItemId_idx" ON "BurpPin"("checklistItemId");
+
+-- WebSocket capture
+CREATE TABLE IF NOT EXISTS "BurpWebSocketMessage" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  host TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  direction TEXT NOT NULL DEFAULT 'sent',
+  content TEXT NOT NULL DEFAULT '',
+  tool TEXT NOT NULL DEFAULT 'proxy',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "BurpWebSocketMessage_projectId_createdAt_idx" ON "BurpWebSocketMessage"("projectId", "createdAt" DESC);
+
+-- AI analysis jobs (JS deep-reads: secrets / endpoints / internal URLs)
+CREATE TABLE IF NOT EXISTS "BurpAnalysisJob" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  "trafficId" TEXT REFERENCES "BurpTraffic"(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'js',
+  status TEXT NOT NULL DEFAULT 'pending',
+  result TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "BurpAnalysisJob_projectId_status_idx" ON "BurpAnalysisJob"("projectId", status);
+
+-- Replay pool — the Burp extension pulls these and fires them locally
+CREATE TABLE IF NOT EXISTS "BurpReplayTask" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  "trafficId" TEXT REFERENCES "BurpTraffic"(id) ON DELETE CASCADE,
+  method TEXT NOT NULL,
+  url TEXT NOT NULL,
+  "requestHeaders" TEXT NOT NULL DEFAULT '{}',
+  "requestBody" TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  result TEXT NOT NULL DEFAULT '',
+  "sentVia" TEXT NOT NULL DEFAULT 'burp',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "BurpReplayTask_projectId_status_idx" ON "BurpReplayTask"("projectId", status);
+
+-- One-time extension pairing codes (auto-provisioning)
+CREATE TABLE IF NOT EXISTS "BurpPairing" (
+  id TEXT PRIMARY KEY,
+  "projectId" TEXT NOT NULL REFERENCES "Project"(id) ON DELETE CASCADE,
+  "codeHash" TEXT NOT NULL,
+  "expiresAt" TIMESTAMP(3) NOT NULL,
+  "usedAt" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS "BurpPairing_codeHash_idx" ON "BurpPairing"("codeHash");
+
+-- Findings list perf (severity + recency)
+CREATE INDEX IF NOT EXISTS "Finding_severity_createdAt_idx" ON "Finding"(severity, "createdAt" DESC);
+
+-- Refresh planner statistics after the schema changes
+ANALYZE "BurpTraffic";
+ANALYZE "BurpEndpoint";
+ANALYZE "BurpChecklistItem";
+
 PATCHES
 success "Schema patches applied"
 

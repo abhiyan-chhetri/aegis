@@ -29,7 +29,19 @@ export async function getSession(): Promise<SessionUser | null> {
     const token = cookieStore.get('aegis-session')?.value;
     if (!token) return null;
     const { payload } = await jwtVerify(token, SECRET);
-    return payload as unknown as SessionUser;
+    const id = (payload as SessionUser).id;
+    if (!id) return null;
+    // Self-heal: confirm the user still exists and return the CURRENT row.
+    // JWTs live 7 days and carry the id from login time — if the DB was
+    // re-seeded or the user's row changed, a stale token used to make
+    // FK-backed writes (Chat, FindingWatcher, …) fail with 23503. Looking the
+    // user up here turns that into a clean 401 → user logs in again.
+    const user = await db.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, name: true, initials: true, role: true, team: true },
+    });
+    if (!user) return null;
+    return user;
   } catch {
     return null;
   }

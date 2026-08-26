@@ -14,7 +14,6 @@ const PAD_TOP   = 40;     // header zone
 const PAD_BOT   = 68;     // footer zone
 const CONTENT_W = PAGE_W - PAD_X * 2;  // 650px
 const CONTENT_H = PAGE_H - PAD_TOP - PAD_BOT - 10; // 1005px usable
-const CONTINUATION_HEADER_H = 36; // px taken by "X continued" header on continuation pages
 
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const DEFAULT_CSS = `
@@ -588,6 +587,7 @@ function PaginatedBlocks({
 }) {
   const [pages, setPages] = useState<number[][]>(() => [blocks.map((_, i) => i)]);
   const measureRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   // Re-measure whenever the block list changes. Each block is rendered inside
   // its OWN `display: flow-root` wrapper so margin-collapse is disabled — every
@@ -600,58 +600,120 @@ function PaginatedBlocks({
     const container = measureRef.current;
     if (!container) return;
 
-    const wrappers = Array.from(container.children) as HTMLElement[];
-    if (wrappers.length === 0) {
-      setPages([[]]);
-      onPageCount(id, 1);
-      return;
-    }
-
-    const heights: number[] = wrappers.map(el => el.getBoundingClientRect().height);
-
-    // Page-budget reservations:
-    //   first page  → full CONTENT_H
-    //   subsequent  → CONTENT_H minus continuation-header height (if provided)
-    const firstBudget = CONTENT_H;
-    const contBudget  = continuationHeader ? CONTENT_H - CONTINUATION_HEADER_H : CONTENT_H;
-
-    const result: number[][] = [];
-    let cur: number[] = [];
-    let curH = 0;
-    let budget = firstBudget;
-
-    for (let i = 0; i < heights.length; i++) {
-      const h = heights[i];
-
-      // Single block bigger than a page → put alone on its own page (overflows
-      // visually but it has no choice — the user would need to shorten it).
-      if (h > budget && cur.length === 0) {
-        result.push([i]);
-        budget = contBudget;
-        continue;
+    const measure = () => {
+      const wrappers = Array.from(container.children) as HTMLElement[];
+      if (wrappers.length === 0) {
+        setPages([[]]);
+        onPageCount(id, 1);
+        return;
       }
 
-      if (curH + h > budget && cur.length > 0) {
-        // Doesn't fit — flush current page, start fresh.
-        result.push(cur);
-        cur = [i];
-        curH = h;
-        budget = contBudget;
-      } else {
-        cur.push(i);
-        curH += h;
-      }
-    }
-    if (cur.length > 0) result.push(cur);
-    if (result.length === 0) result.push([]);
+      const heights: number[] = wrappers.map(el => el.getBoundingClientRect().height);
 
-    setPages(result);
-    onPageCount(id, result.length);
+      // Reserve exactly the *measured* continuation-header height on every
+      // continuation page. (The old hard-coded 36px under-reserved by ~24px —
+      // `.rpt-fid` carries a 22pt top margin — so the bottom of every continued
+      // page got clipped.) No continuation header → headerRef stays null → 0.
+      const headerH = headerRef.current?.firstElementChild
+        ? (headerRef.current.firstElementChild as HTMLElement).getBoundingClientRect().height
+        : 0;
+
+      // Page-budget reservations:
+      //   first page  → full CONTENT_H
+      //   subsequent  → CONTENT_H minus measured continuation-header height
+      const firstBudget = CONTENT_H;
+      const contBudget  = Math.max(0, CONTENT_H - headerH);
+
+      const result: number[][] = [];
+      let cur: number[] = [];
+      let curH = 0;
+      let budget = firstBudget;
+
+      for (let i = 0; i < heights.length; i++) {
+        const h = heights[i];
+
+        // Single block bigger than a page → put alone on its own page (overflows
+        // visually but it has no choice — the user would need to shorten it).
+        if (h > budget && cur.length === 0) {
+          result.push([i]);
+          budget = contBudget;
+          continue;
+        }
+
+        if (curH + h > budget && cur.length > 0) {
+          // Doesn't fit — flush current page, start fresh.
+          result.push(cur);
+          cur = [i];
+          curH = h;
+          budget = contBudget;
+        } else {
+          cur.push(i);
+          curH += h;
+        }
+      }
+      if (cur.length > 0) result.push(cur);
+      if (result.length === 0) result.push([]);
+
+      setPages(result);
+      onPageCount(id, result.length);
+    };
+
+    measure();
+
+    // Evidence screenshots are data-URL <img>s that decode asynchronously: at
+    // first layout they have height 0, so a single measurement under-estimates
+    // every image-bearing block and the page bottom clips. Listen for every
+    // <img> inside the measurement area and re-measure (debounced per frame) as
+    // they finish loading — and again once web fonts settle. Images that were
+    // still pending when the effect ran keep their listeners, so a slow image
+    // that finishes after an early re-measure still triggers a final pass.
+    let rafId: number | null = null;
+    const reMeasure = () => {
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        if (measureRef.current) measure();
+      });
+    };
+
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready.then(reMeasure).catch(() => {});
+    }
+
+    const imgs = Array.from(container.querySelectorAll('img'));
+    const pending = imgs.filter(img => !img.complete);
+    if (pending.length > 0) {
+      pending.forEach(img => {
+        img.addEventListener('load', reMeasure);
+        img.addEventListener('error', reMeasure);
+      });
+      return () => {
+        imgs.forEach(img => {
+          img.removeEventListener('load', reMeasure);
+          img.removeEventListener('error', reMeasure);
+        });
+      };
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, blocks.length]);
 
   return (
     <>
+      {/* Hidden measurement of the continuation header (if any) — measured at the
+          same width/font as the real pages so its reserved height is exact. */}
+      {continuationHeader && (
+        <div
+          ref={headerRef}
+          className="rpt-page"
+          style={{
+            position: 'fixed', left: -9999, top: -9999, width: CONTENT_W,
+            visibility: 'hidden', pointerEvents: 'none',
+          }}
+        >
+          <div style={{ display: 'flow-root' }}>{continuationHeader}</div>
+        </div>
+      )}
+
       {/* Hidden measurement: each block in its own `flow-root` wrapper so margins
           are contained and the wrapper's height fully accounts for them. */}
       <div
@@ -866,7 +928,11 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
     setTodayStr(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }));
   }, []);
   const [pageCounts, setPageCounts] = useState<Record<string, number>>(
-    () => ({ __exec: 1, __strat: 1, __tech: 1, __overview: 1, ...Object.fromEntries(findings.map(f => [f.id, 1])) })
+    () => ({
+      __toc: 1, __exec: 1, __strat: 1, __tech: 1, __overview: 1,
+      ...Object.fromEntries(SEV_ORDER.map(s => [`__sev_${s}`, 1])),
+      ...Object.fromEntries(findings.map(f => [f.id, 1])),
+    })
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -909,13 +975,13 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
   const activeSevGroups = SEV_ORDER.filter(s => (counts[s] || 0) > 0);
 
   // ── Page numbering ──────────────────────────────────────────────────────────
-  // Fixed pages: 1=Cover, 2=DocControl, 3=TOC
-  // Variable-length sections paginate dynamically using PaginatedBlocks component
-  const FIXED = 3; // cover, doc-control, TOC
-  const execStartPage     = FIXED + 1;   // always page 4
-  const stratStartPage    = execStartPage     + (pageCounts['__exec']     || 1);
-  const techStartPage     = stratStartPage    + (pageCounts['__strat']    || 1);
-  const overviewStartPage = techStartPage     + (pageCounts['__tech']     || 1);
+  // Fixed pages: 1=Cover, 2=DocControl. The TOC and every section paginate
+  // dynamically — page counts come from the measured PaginatedBlocks.
+  const tocStartPage      = 3;   // TOC always starts on page 3
+  const execStartPage     = tocStartPage     + (pageCounts['__toc']       || 1);
+  const stratStartPage    = execStartPage    + (pageCounts['__exec']      || 1);
+  const techStartPage     = stratStartPage   + (pageCounts['__strat']     || 1);
+  const overviewStartPage = techStartPage    + (pageCounts['__tech']      || 1);
   let pageCounter         = overviewStartPage + (pageCounts['__overview'] || 1);
 
   const sevSectionPages: Record<string, number> = {};
@@ -926,7 +992,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
   activeSevGroups.forEach((sev, i) => {
     sevSubNums[sev] = `4.${i + 1}`;
     sevSectionPages[sev] = pageCounter;
-    pageCounter += 1; // 1 intro page per group
+    pageCounter += pageCounts[`__sev_${sev}`] || 1; // 1+ intro pages per group
     const groupFindings = sorted.filter(f => f.severity === sev);
     for (const f of groupFindings) {
       findingStartPages[f.id] = pageCounter;
@@ -971,6 +1037,26 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
   </body>
 </html>`;
 
+      // PDF bookmarks (clickable outline in the exported PDF) — built from the
+      // same page maps the preview shows, so bookmarks always match print pages.
+      const bookmarks = [
+        { title: 'Executive Summary', page: execStartPage },
+        { title: 'Strategic Recommendations', page: stratStartPage },
+        { title: 'Technical Details', page: techStartPage },
+        { title: 'Detailed Findings', page: overviewStartPage },
+        ...activeSevGroups.map(sev => ({
+          title: `${SEV_LABEL[sev]} Findings`,
+          page: sevSectionPages[sev],
+          children: sorted.filter(f => f.severity === sev).map(f => ({
+            title: `${f.code} — ${f.title}`,
+            page: findingStartPages[f.id],
+          })),
+        })),
+        { title: 'Appendix A — CVSS Severity Ratings', page: appendixAPage },
+        { title: 'Appendix B — Tools and Techniques', page: appendixBPage },
+        { title: 'Appendix C — Glossary', page: appendixCPage },
+      ];
+
       // Send to server for PDF generation
       const response = await fetch('/api/reports/generate-pdf', {
         method: 'POST',
@@ -980,6 +1066,7 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
           html: fullHtml,
           filename: `${project.code}-report-${new Date().toISOString().split('T')[0]}.pdf`,
           action,
+          bookmarks,
         }),
       });
 
@@ -1138,55 +1225,54 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             </div>
           </Page>
 
-          {/* ══ PAGE 3 — TABLE OF CONTENTS ══ */}
-          <Page id="page-3" pageNum={3} totalPages={totalPages} project={project} logoUrl={logoUrl}>
-            <SecHead num="">Contents</SecHead>
+          {/* ══ TABLE OF CONTENTS (block-paginated — many findings overflow one page) ══ */}
+          {(() => {
+            const tocBlocks: React.ReactNode[] = [];
+            tocBlocks.push(<SecHead key="head" num="">Contents</SecHead>);
 
-            {/* Document Control */}
-            <TocRow level="l1" num="0" title="Document Control" page={2} onClick={() => scrollToPage(2)} />
-            <TocRow level="l2" num="0.1" title="Revision History" page={2} onClick={() => scrollToPage(2)} />
-            <TocRow level="l2" num="0.2" title="Confidentiality Notice" page={2} onClick={() => scrollToPage(2)} />
+            // Document Control
+            tocBlocks.push(<TocRow key="dc" level="l1" num="0" title="Document Control" page={2} onClick={() => scrollToPage(2)} />);
+            tocBlocks.push(<TocRow key="dc-1" level="l2" num="0.1" title="Revision History" page={2} onClick={() => scrollToPage(2)} />);
+            tocBlocks.push(<TocRow key="dc-2" level="l2" num="0.2" title="Confidentiality Notice" page={2} onClick={() => scrollToPage(2)} />);
 
-            {/* Executive Summary */}
-            <TocRow level="l1" num="1" title="Executive Summary" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
-            <TocRow level="l2" num="1.1" title="Findings at a Glance" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
-            <TocRow level="l2" num="1.2" title="Project Scope" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
-            <TocRow level="l2" num="1.3" title="Key Security Strengths" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
-            <TocRow level="l2" num="1.4" title="Key Areas for Improvement" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />
+            // Executive Summary
+            tocBlocks.push(<TocRow key="es" level="l1" num="1" title="Executive Summary" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />);
+            tocBlocks.push(<TocRow key="es-1" level="l2" num="1.1" title="Findings at a Glance" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />);
+            tocBlocks.push(<TocRow key="es-2" level="l2" num="1.2" title="Project Scope" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />);
+            tocBlocks.push(<TocRow key="es-3" level="l2" num="1.3" title="Key Security Strengths" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />);
+            tocBlocks.push(<TocRow key="es-4" level="l2" num="1.4" title="Key Areas for Improvement" page={execStartPage} onClick={() => scrollToPage(execStartPage)} />);
 
-            {/* Strategic Recommendations */}
-            <TocRow level="l1" num="2" title="Strategic Recommendations" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
-            <TocRow level="l2" num="2.1" title="Immediate Actions (0–30 Days)" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
-            <TocRow level="l2" num="2.2" title="Short-Term Improvements (30–90 Days)" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
-            <TocRow level="l2" num="2.3" title="Long-Term Security Hardening" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />
+            // Strategic Recommendations
+            tocBlocks.push(<TocRow key="sr" level="l1" num="2" title="Strategic Recommendations" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />);
+            tocBlocks.push(<TocRow key="sr-1" level="l2" num="2.1" title="Immediate Actions (0–30 Days)" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />);
+            tocBlocks.push(<TocRow key="sr-2" level="l2" num="2.2" title="Short-Term Improvements (30–90 Days)" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />);
+            tocBlocks.push(<TocRow key="sr-3" level="l2" num="2.3" title="Long-Term Security Hardening" page={stratStartPage} onClick={() => scrollToPage(stratStartPage)} />);
 
-            {/* Technical Details */}
-            <TocRow level="l1" num="3" title="Technical Details" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
-            <TocRow level="l2" num="3.1" title="Technical Scope" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
-            <TocRow level="l2" num="3.2" title="Testing Details" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
-            <TocRow level="l2" num="3.3" title="Engagement Timeline" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />
+            // Technical Details
+            tocBlocks.push(<TocRow key="td" level="l1" num="3" title="Technical Details" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />);
+            tocBlocks.push(<TocRow key="td-1" level="l2" num="3.1" title="Technical Scope" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />);
+            tocBlocks.push(<TocRow key="td-2" level="l2" num="3.2" title="Testing Details" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />);
+            tocBlocks.push(<TocRow key="td-3" level="l2" num="3.3" title="Engagement Timeline" page={techStartPage} onClick={() => scrollToPage(techStartPage)} />);
 
-            {/* Detailed Findings */}
-            <TocRow level="l1" num="4" title="Detailed Findings" page={overviewStartPage} onClick={() => scrollToPage(overviewStartPage)} />
-            {activeSevGroups.map(sev => {
+            // Detailed Findings
+            tocBlocks.push(<TocRow key="df" level="l1" num="4" title="Detailed Findings" page={overviewStartPage} onClick={() => scrollToPage(overviewStartPage)} />);
+            activeSevGroups.forEach(sev => {
               const subNum = sevSubNums[sev];
               const secPage = sevSectionPages[sev];
               const groupFindings = sorted.filter(f => f.severity === sev);
-              return (
-                <React.Fragment key={sev}>
-                  <TocRow level="l2" num={subNum} title={SEV_LABEL[sev] + ' Findings'} page={secPage} onClick={() => scrollToPage(secPage)} />
-                  {groupFindings.map(f => (
-                    <TocRow key={f.id} level="l3" title={f.title} page={findingStartPages[f.id]} code={f.code} onClick={() => scrollToPage(findingStartPages[f.id])} />
-                  ))}
-                </React.Fragment>
-              );
-            })}
+              tocBlocks.push(<TocRow key={`df-${sev}`} level="l2" num={subNum} title={SEV_LABEL[sev] + ' Findings'} page={secPage} onClick={() => scrollToPage(secPage)} />);
+              groupFindings.forEach(f => {
+                tocBlocks.push(<TocRow key={f.id} level="l3" title={f.title} page={findingStartPages[f.id]} code={f.code} onClick={() => scrollToPage(findingStartPages[f.id])} />);
+              });
+            });
 
-            {/* Appendices */}
-            <TocRow level="l1" title="Appendix A — CVSS Severity Ratings" page={appendixAPage} onClick={() => scrollToPage(appendixAPage)} />
-            <TocRow level="l1" title="Appendix B — Tools and Techniques" page={appendixBPage} onClick={() => scrollToPage(appendixBPage)} />
-            <TocRow level="l1" title="Appendix C — Glossary" page={appendixCPage} onClick={() => scrollToPage(appendixCPage)} />
-          </Page>
+            // Appendices
+            tocBlocks.push(<TocRow key="app-a" level="l1" title="Appendix A — CVSS Severity Ratings" page={appendixAPage} onClick={() => scrollToPage(appendixAPage)} />);
+            tocBlocks.push(<TocRow key="app-b" level="l1" title="Appendix B — Tools and Techniques" page={appendixBPage} onClick={() => scrollToPage(appendixBPage)} />);
+            tocBlocks.push(<TocRow key="app-c" level="l1" title="Appendix C — Glossary" page={appendixCPage} onClick={() => scrollToPage(appendixCPage)} />);
+
+            return <PaginatedBlocks id="__toc" blocks={tocBlocks} startPage={tocStartPage} totalPages={totalPages} project={project} logoUrl={logoUrl} onPageCount={onPageCount} />;
+          })()}
 
           {/* ══ PAGES 4+ — EXECUTIVE SUMMARY (block-paginated) ══ */}
           {(() => {
@@ -1310,41 +1396,47 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             }
             const critHighList = sorted.filter(f => f.severity === 'critical' || f.severity === 'high');
             const medList = sorted.filter(f => f.severity === 'medium');
+            const UL_ROWS_PER_BLOCK = 10;
             blocks.push(<SubHead key="sub-2.1" num="2.1">Immediate Actions (0–30 Days)</SubHead>);
             if (critHighList.length > 0) {
               blocks.push(<p key="ch-p" className="rpt-p">The following critical and high-severity findings require immediate attention:</p>);
-              blocks.push(
-                <ul key="ch-list" className="rpt-ul">
-                  {critHighList.map(f => {
-                    const remSnip = f.remediation
-                      ? f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n').find(l => l.trim()) || ''
-                      : '';
-                    return (
-                      <li key={f.id}>
-                        <Badge sev={f.severity} />{' '}
-                        <b>{f.code}</b> — <InlineMarkdown>{f.title}</InlineMarkdown>
-                        {remSnip && <span style={{ color: 'var(--ink60)' }}>{': '}<InlineMarkdown>{remSnip.slice(0, 140)}</InlineMarkdown></span>}
-                      </li>
-                    );
-                  })}
-                </ul>
-              );
+              // Chunked so a long list packs across pages instead of clipping.
+              for (let i = 0; i < critHighList.length; i += UL_ROWS_PER_BLOCK) {
+                blocks.push(
+                  <ul key={`ch-list-${i}`} className="rpt-ul">
+                    {critHighList.slice(i, i + UL_ROWS_PER_BLOCK).map(f => {
+                      const remSnip = f.remediation
+                        ? f.remediation.replace(/^#{1,3}\s[^\n]*/gm, '').trim().split('\n').find(l => l.trim()) || ''
+                        : '';
+                      return (
+                        <li key={f.id}>
+                          <Badge sev={f.severity} />{' '}
+                          <b>{f.code}</b> — <InlineMarkdown>{f.title}</InlineMarkdown>
+                          {remSnip && <span style={{ color: 'var(--ink60)' }}>{': '}<InlineMarkdown>{remSnip.slice(0, 140)}</InlineMarkdown></span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              }
             } else {
               blocks.push(<p key="ch-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No critical or high-severity findings requiring immediate remediation.</p>);
             }
             blocks.push(<SubHead key="sub-2.2" num="2.2">Short-Term Improvements (30–90 Days)</SubHead>);
             if (medList.length > 0) {
               blocks.push(<p key="med-p" className="rpt-p">Address medium-severity findings to reduce overall attack surface:</p>);
-              blocks.push(
-                <ul key="med-list" className="rpt-ul">
-                  {medList.map(f => (
-                    <li key={f.id}>
-                      <Badge sev={f.severity} />{' '}
-                      <b>{f.code}</b> — <InlineMarkdown>{f.title}</InlineMarkdown>
-                    </li>
-                  ))}
-                </ul>
-              );
+              for (let i = 0; i < medList.length; i += UL_ROWS_PER_BLOCK) {
+                blocks.push(
+                  <ul key={`med-list-${i}`} className="rpt-ul">
+                    {medList.slice(i, i + UL_ROWS_PER_BLOCK).map(f => (
+                      <li key={f.id}>
+                        <Badge sev={f.severity} />{' '}
+                        <b>{f.code}</b> — <InlineMarkdown>{f.title}</InlineMarkdown>
+                      </li>
+                    ))}
+                  </ul>
+                );
+              }
             } else {
               blocks.push(<p key="med-empty" className="rpt-p" style={{ color: 'var(--ink60)' }}>No medium-severity findings in this assessment period.</p>);
             }
@@ -1452,33 +1544,50 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                   : 'No findings were identified during this engagement.'}
               </p>
             );
-            blocks.push(
-              <table key="ov-table" className="rpt-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '12%' }}>ID</th>
-                    <th style={{ width: '17%' }}>Severity</th>
-                    <th>Title</th>
-                    <th style={{ width: '18%' }}>Component</th>
-                    <th style={{ width: '8%' }}>CVSS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map(f => (
-                    <tr key={f.id}>
-                      <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{f.code}</td>
-                      <td><Badge sev={f.severity} /></td>
-                      <td>{f.title}</td>
-                      <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt', color: 'var(--ink60)' }}>{f.component || '—'}</td>
-                      <td style={{ fontWeight: 700, color: SEV_COLOR[f.severity] }}>{f.cvss > 0 ? f.cvss : '—'}</td>
-                    </tr>
-                  ))}
-                  {sorted.length === 0 && (
-                    <tr><td colSpan={5} style={{ color: 'var(--ink60)', padding: '20px 7pt' }}>No findings recorded.</td></tr>
-                  )}
-                </tbody>
-              </table>
+            // The overview table lists EVERY finding. With many findings it is
+            // taller than a page, so split it into chunked tables (header
+            // repeated per chunk) that the paginator packs across pages.
+            const OVERVIEW_ROWS_PER_TABLE = 14;
+            const ovHead = (
+              <thead>
+                <tr>
+                  <th style={{ width: '12%' }}>ID</th>
+                  <th style={{ width: '17%' }}>Severity</th>
+                  <th>Title</th>
+                  <th style={{ width: '18%' }}>Component</th>
+                  <th style={{ width: '8%' }}>CVSS</th>
+                </tr>
+              </thead>
             );
+            if (sorted.length > 0) {
+              for (let i = 0; i < sorted.length; i += OVERVIEW_ROWS_PER_TABLE) {
+                blocks.push(
+                  <table key={`ov-table-${i}`} className="rpt-table" style={{ marginTop: i === 0 ? undefined : 10 }}>
+                    {ovHead}
+                    <tbody>
+                      {sorted.slice(i, i + OVERVIEW_ROWS_PER_TABLE).map(f => (
+                        <tr key={f.id}>
+                          <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{f.code}</td>
+                          <td><Badge sev={f.severity} /></td>
+                          <td>{f.title}</td>
+                          <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt', color: 'var(--ink60)' }}>{f.component || '—'}</td>
+                          <td style={{ fontWeight: 700, color: SEV_COLOR[f.severity] }}>{f.cvss > 0 ? f.cvss : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              }
+            } else {
+              blocks.push(
+                <table key="ov-table-empty" className="rpt-table">
+                  {ovHead}
+                  <tbody>
+                    <tr><td colSpan={5} style={{ color: 'var(--ink60)', padding: '20px 7pt' }}>No findings recorded.</td></tr>
+                  </tbody>
+                </table>
+              );
+            }
             blocks.push(
               <p key="ov-foot" className="rpt-p" style={{ fontSize: '9pt', color: 'var(--ink60)', marginTop: 20 }}>
                 Refer to Appendix A for CVSS severity rating definitions. Each finding on the following pages
@@ -1495,35 +1604,35 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             const subNum        = sevSubNums[sev];
             return (
               <React.Fragment key={sev}>
-                {/* Severity section intro page */}
-                <Page
-                  pageNum={secPage}
-                  totalPages={totalPages}
-                  project={project}
-                >
-                  <SecHead num={subNum}>{SEV_LABEL[sev]} Findings</SecHead>
-                  <div className={`rpt-sev-banner ${sev}`} style={{ marginTop: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                      <Badge sev={sev} />
-                      <span style={{ fontSize: '10pt', fontWeight: 600 }}>
-                        {counts[sev]} {counts[sev] === 1 ? 'finding' : 'findings'}
-                      </span>
-                      {riskScore > 0 && sev !== 'info' && (
-                        <span style={{ marginLeft: 'auto', fontSize: '9pt', color: 'var(--ink60)' }}>
-                          Avg CVSS: {(groupFindings.filter(f => f.cvss > 0).reduce((a, f) => a + f.cvss, 0) / (groupFindings.filter(f => f.cvss > 0).length || 1)).toFixed(1)}
+                {/* Severity section intro — block-paginated (a big group's
+                    table overflows a single fixed page, so split + pack it) */}
+                {(() => {
+                  const sevBlocks: React.ReactNode[] = [];
+                  sevBlocks.push(<SecHead key="head" num={subNum}>{SEV_LABEL[sev]} Findings</SecHead>);
+                  sevBlocks.push(
+                    <div key="banner" className={`rpt-sev-banner ${sev}`} style={{ marginTop: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                        <Badge sev={sev} />
+                        <span style={{ fontSize: '10pt', fontWeight: 600 }}>
+                          {counts[sev]} {counts[sev] === 1 ? 'finding' : 'findings'}
                         </span>
-                      )}
+                        {riskScore > 0 && sev !== 'info' && (
+                          <span style={{ marginLeft: 'auto', fontSize: '9pt', color: 'var(--ink60)' }}>
+                            Avg CVSS: {(groupFindings.filter(f => f.cvss > 0).reduce((a, f) => a + f.cvss, 0) / (groupFindings.filter(f => f.cvss > 0).length || 1)).toFixed(1)}
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ margin: 0, fontSize: '10pt', lineHeight: 1.6, color: 'var(--ink80)' }}>
+                        {sev === 'critical' && 'Critical findings represent direct, immediate threats exploitable with low effort. These require emergency remediation.'}
+                        {sev === 'high'     && 'High-severity findings pose significant risk to system integrity, confidentiality, or availability. Remediate within 30 days.'}
+                        {sev === 'medium'   && 'Medium-severity findings require non-trivial preconditions but materially weaken security posture. Remediate within 90 days.'}
+                        {sev === 'low'      && 'Low-severity findings have limited impact in isolation. Address as part of regular security hygiene within 180 days.'}
+                        {sev === 'info'     && 'Informational observations worth noting for hardening or hygiene. No immediate risk, but recommended for long-term improvement.'}
+                      </p>
                     </div>
-                    <p style={{ margin: 0, fontSize: '10pt', lineHeight: 1.6, color: 'var(--ink80)' }}>
-                      {sev === 'critical' && 'Critical findings represent direct, immediate threats exploitable with low effort. These require emergency remediation.'}
-                      {sev === 'high'     && 'High-severity findings pose significant risk to system integrity, confidentiality, or availability. Remediate within 30 days.'}
-                      {sev === 'medium'   && 'Medium-severity findings require non-trivial preconditions but materially weaken security posture. Remediate within 90 days.'}
-                      {sev === 'low'      && 'Low-severity findings have limited impact in isolation. Address as part of regular security hygiene within 180 days.'}
-                      {sev === 'info'     && 'Informational observations worth noting for hardening or hygiene. No immediate risk, but recommended for long-term improvement.'}
-                    </p>
-                  </div>
-
-                  <table className="rpt-table" style={{ marginTop: 14 }}>
+                  );
+                  const SEV_ROWS_PER_TABLE = 16;
+                  const sevHead = (
                     <thead>
                       <tr>
                         <th style={{ width: '15%' }}>ID</th>
@@ -1532,18 +1641,26 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
                         <th style={{ width: '12%' }}>Page</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {groupFindings.map(f => (
-                        <tr key={f.id}>
-                          <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{f.code}</td>
-                          <td>{f.title}</td>
-                          <td style={{ fontWeight: 700, color: SEV_COLOR[f.severity] }}>{f.cvss > 0 ? f.cvss : '—'}</td>
-                          <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{findingStartPages[f.id]}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </Page>
+                  );
+                  for (let i = 0; i < groupFindings.length; i += SEV_ROWS_PER_TABLE) {
+                    sevBlocks.push(
+                      <table key={`tbl-${i}`} className="rpt-table" style={{ marginTop: i === 0 ? 14 : 10 }}>
+                        {sevHead}
+                        <tbody>
+                          {groupFindings.slice(i, i + SEV_ROWS_PER_TABLE).map(f => (
+                            <tr key={f.id}>
+                              <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{f.code}</td>
+                              <td>{f.title}</td>
+                              <td style={{ fontWeight: 700, color: SEV_COLOR[f.severity] }}>{f.cvss > 0 ? f.cvss : '—'}</td>
+                              <td style={{ fontFamily: 'var(--mono)', fontSize: '9pt' }}>{findingStartPages[f.id]}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    );
+                  }
+                  return <PaginatedBlocks id={`__sev_${sev}`} blocks={sevBlocks} startPage={secPage} totalPages={totalPages} project={project} onPageCount={onPageCount} />;
+                })()}
 
                 {/* Individual finding pages — block-paginated */}
                 {groupFindings.map(f => (
@@ -1714,9 +1831,9 @@ export function ReportPreview({ project, findings, counts, riskScore, latestRepo
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {/* Fixed pages */}
               {[
-                { p: 1, label: 'Cover' }, { p: 2, label: 'DocCtl' }, { p: 3, label: 'ToC' },
-                { p: 4, label: 'Exec' },  { p: 5, label: 'Strat' },  { p: 6, label: 'Tech' },
-                { p: 7, label: 'Ovw' },
+                { p: 1, label: 'Cover' }, { p: 2, label: 'DocCtl' }, { p: tocStartPage, label: 'ToC' },
+                { p: execStartPage, label: 'Exec' },  { p: stratStartPage, label: 'Strat' },  { p: techStartPage, label: 'Tech' },
+                { p: overviewStartPage, label: 'Ovw' },
               ].map(({ p, label }) => (
                 <button key={`${p}-${label}`} onClick={() => scrollToPage(p)} style={{
                   minWidth: 46, height: 44, padding: '0 4px',

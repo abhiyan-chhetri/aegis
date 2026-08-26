@@ -27,6 +27,7 @@ model User {
   notifications      Notification[] @relation("NotificationRecipient")
   notificationsActed Notification[] @relation("NotificationActor")
   watching           FindingWatcher[]
+  burpPins           BurpPin[]
 }
 
 model Notification {
@@ -103,11 +104,27 @@ model Project {
   lead             User     @relation("ProjectLead", fields: [leadId], references: [id])
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  /// Burp Bridge — declared scope (hosts, one per line) that the ingest
+  /// endpoint accepts traffic for. Empty = accept all (extension-side guard).
+  burpScope         String @default("")
+  /// How long ingested Burp traffic is retained before auto-cleanup.
+  burpRetentionDays Int    @default(90)
+  /// JSON capture rules: { dropHosts: string[], onlyTools: string[], dropStatic: boolean }
+  burpCaptureRules String @default("{}")
 
   findings   Finding[]
   reports    Report[]
   activities Activity[]
   snapshots  ProjectSnapshot[]
+  engagementKeys  EngagementKey[]
+  burpTraffic     BurpTraffic[]
+  burpEndpoints   BurpEndpoint[]
+  burpChecklistItems BurpChecklistItem[]
+  burpPins        BurpPin[]
+  burpWebSocketMessages BurpWebSocketMessage[]
+  burpAnalysisJobs BurpAnalysisJob[]
+  burpReplayTasks  BurpReplayTask[]
+  burpPairings     BurpPairing[]
 }
 
 model Finding {
@@ -148,12 +165,14 @@ model Finding {
   updatedAt    DateTime @updatedAt
 
   @@index([projectId, sortOrder])
+  @@index([severity, createdAt(sort: Desc)])
 
   evidence   Evidence[]
   activities Activity[]
   comments   FindingComment[]
   watchers   FindingWatcher[]
   notifications Notification[]
+  burpTraffic BurpTraffic[]
 }
 
 model Evidence {
@@ -289,4 +308,219 @@ model AppSetting {
   isSecret  Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ── Burp Bridge ───────────────────────────────────────────────────────────────
+// Live traffic ingestion from the Burp extension, endpoint inventory, AI
+// checklist + anomaly detection, and finding ↔ traffic linkage.
+
+/// Engagement secret key that authenticates the Burp extension to the ingest
+/// endpoint. Only the SHA-256 hash is stored; the plaintext is shown once.
+model EngagementKey {
+  id         String    @id @default(cuid())
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keyHash    String
+  keyPrefix  String    @default("") // first 8 chars, for display
+  label      String    @default("Burp extension")
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([projectId])
+  @@index([keyHash])
+}
+
+/// One captured request/response pair forwarded by the Burp extension.
+model BurpTraffic {
+  id              String    @id @default(cuid())
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Dedup hash: method|url|requestBody|responseBody
+  sha256          String
+  method          String
+  url             String
+  host            String
+  path            String    // path including query string
+  pathNoQuery     String
+  query           String    @default("")
+  statusCode      Int
+  contentType     String    @default("")
+  requestHeaders  String    @default("") // JSON object
+  requestBody     String    @default("")
+  responseHeaders String    @default("") // JSON object
+  responseBody    String    @default("")
+  /// proxy | repeater | intruder | scanner | manual — drives auto "tested"
+  /// marking on the checklist (Repeater/Intruder activity counts as testing).
+  tool            String    @default("proxy")
+  sizeBytes       Int       @default(0)
+  truncated       Boolean   @default(false)
+  scopeOk         Boolean   @default(true)
+  /// When true this exchange is the authenticated session anchor — replays and
+  /// the payload runner inject its cookies/tokens into other requests.
+  isSession       Boolean   @default(false)
+  /// JSON array of {type,label,severity} auto/anomaly flags.
+  anomalies       String    @default("[]")
+  /// JSON array of {type,value(masked),context} secrets found in bodies.
+  secrets         String    @default("[]")
+  findingId       String?
+  finding         Finding?  @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+
+  pins BurpPin[]
+  analysisJobs BurpAnalysisJob[]
+  replayTasks  BurpReplayTask[]
+
+  @@unique([projectId, sha256])
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([projectId, findingId])
+  @@index([host, pathNoQuery])
+}
+
+/// Normalized endpoint inventory derived from ingested traffic.
+model BurpEndpoint {
+  id            String    @id @default(cuid())
+  projectId     String
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  method        String
+  host          String
+  path          String    // normalized: /users/:id
+  sampleUrl     String    @default("")
+  hitCount      Int       @default(0)
+  statusCodes   String    @default("[]")
+  firstSeenAt   DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  isJsAsset     Boolean   @default(false)
+  /// JSON array of {type,label,severity} aggregated flags.
+  anomalies     String    @default("[]")
+  testedCount   Int       @default(0)
+  succeededCount Int      @default(0)
+  createdAt     DateTime  @default(now())
+
+  checklistItems BurpChecklistItem[]
+
+  @@unique([projectId, method, host, path])
+  @@index([projectId, lastSeenAt(sort: Desc)])
+}
+
+/// Attack-checklist item — AI-generated or from the curated cheatsheet.
+model BurpChecklistItem {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  endpointId  String?
+  endpoint    BurpEndpoint? @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      BurpChecklistItem? @relation("BurpChecklistParent", fields: [parentId], references: [id], onDelete: Cascade)
+  children    BurpChecklistItem[] @relation("BurpChecklistParent")
+  category    String   // xss | sqli | ssrf | idor | auth | …
+  technique   String
+  description String   @default("")
+  payload     String   @default("")
+  /// untested | tested | succeeded | failed | blocked
+  status      String   @default("untested")
+  resultNote  String   @default("")
+  /// ai | cheatsheet | manual | bypass
+  source      String   @default("ai")
+  /// Set when tool activity auto-marked this item (repeater/intruder/proxy).
+  autoMarkedBy String  @default("")
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  pins BurpPin[]
+
+  @@index([projectId, status])
+  @@index([projectId, category])
+}
+
+/// Pinned traffic rows ("interesting rail") — drag traffic to pin, promote
+/// later to a finding draft. A pin references either a traffic row or a
+/// checklist item.
+model BurpPin {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  trafficId String?
+  traffic   BurpTraffic? @relation(fields: [trafficId], references: [id], onDelete: Cascade)
+  checklistItemId String?
+  checklistItem   BurpChecklistItem? @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note      String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+}
+
+/// Captured WebSocket messages forwarded by the Burp extension.
+model BurpWebSocketMessage {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  host      String   @default("")
+  url       String   @default("")
+  /// sent | received
+  direction String   @default("sent")
+  content   String   @default("")
+  tool      String   @default("proxy")
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt(sort: Desc)])
+}
+
+/// Queued AI analysis of captured assets (JS bundles, error responses) —
+/// the backend auto-scans JS with the AI when it arrives.
+model BurpAnalysisJob {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  trafficId String?
+  traffic   BurpTraffic? @relation(fields: [trafficId], references: [id], onDelete: Cascade)
+  /// js | response
+  kind      String   @default("js")
+  /// pending | running | done | failed
+  status    String   @default("pending")
+  result    String   @default("")
+  error     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+}
+
+/// Replay tasks queued when the Aegis server can't reach the target — the
+/// Burp extension pulls these and fires them from the tester's machine.
+model BurpReplayTask {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  trafficId String?
+  traffic   BurpTraffic? @relation(fields: [trafficId], references: [id], onDelete: Cascade)
+  method    String
+  url       String
+  requestHeaders String @default("{}")
+  requestBody    String @default("")
+  /// pending | done | failed
+  status    String   @default("pending")
+  result    String   @default("")
+  sentVia   String   @default("burp")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, status])
+}
+
+/// One-time pairing codes that auto-provision the Burp extension
+/// (server URL + engagement key) without manual paste.
+model BurpPairing {
+  id        String    @id @default(cuid())
+  projectId String
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([codeHash])
 }

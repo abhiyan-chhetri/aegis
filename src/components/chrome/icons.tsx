@@ -92,6 +92,10 @@ export const ICONS: Record<string, string> = {
   grip:      '<circle cx="9" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="15" cy="18" r="1.2"/>',
   message:   '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/>',
   inbox:     '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  pin:       '<path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6Z"/><path d="M12 14v7"/>',
+  key:       '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M11 12 21 2M16 7l3 3M18 5l2 2"/>',
+  replay:    '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/>',
+  waves:     '<path d="M3 7c3-2.5 6-2.5 9 0s6 2.5 9 0M3 12c3-2.5 6-2.5 9 0s6 2.5 9 0M3 17c3-2.5 6-2.5 9 0s6 2.5 9 0"/>',
 };
 
 type IcoProps = {

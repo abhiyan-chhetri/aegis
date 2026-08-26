@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Ico, Logo, Avatar } from './icons';
+import { toast } from '@/components/ui/Toast';
 
 type User = { name: string; initials: string; role: string };
 
@@ -12,6 +13,7 @@ type SidebarProps = { user?: User | null };
 const NAV_ITEMS = [
   { href: '/dashboard',     icon: 'dashboard', label: 'Dashboard' },
   { href: '/inbox',         icon: 'message',   label: 'Inbox' },
+  { href: '/chat',          icon: 'sparkles',  label: 'AI Chat' },
   { href: '/notifications', icon: 'bell',      label: 'Notifications' },
   { href: '/projects',      icon: 'projects',  label: 'Projects' },
   { href: '/library',       icon: 'library',   label: 'Vuln List' },
@@ -43,6 +45,20 @@ export function Sidebar({ user }: SidebarProps) {
     const t = setInterval(load, 30_000);
     return () => { alive = false; clearInterval(t); };
   }, [pathname]);
+
+  // Realtime notification stream — refresh the badge instantly and surface a
+  // toast when a watched finding changes or someone mentions us.
+  React.useEffect(() => {
+    const es = new EventSource('/api/notifications/live');
+    es.onmessage = (ev) => {
+      let d: { type?: string; n?: { type?: string; title?: string; body?: string; link?: string } };
+      try { d = JSON.parse(ev.data); } catch { return; }
+      if (d.type !== 'notify' || !d.n) return;
+      setUnreadCount(c => c + 1);
+      toast.info(d.n.title || 'New notification', { description: d.n.body || undefined });
+    };
+    return () => es.close();
+  }, []);
 
   function isActive(href: string) {
     if (href === '/dashboard') return pathname === '/dashboard';

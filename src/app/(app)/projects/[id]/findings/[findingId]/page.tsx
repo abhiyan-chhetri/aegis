@@ -6,6 +6,7 @@ import { Topbar } from '@/components/chrome/Topbar';
 import { TrackRecent } from '@/components/chrome/TrackRecent';
 import { Ico } from '@/components/chrome/icons';
 import { UnifiedFindingEditor } from '@/components/findings/UnifiedFindingEditor';
+import { FindingTrafficPanel } from '@/components/burp/FindingTrafficPanel';
 
 type Props = { params: Promise<{ id: string; findingId: string }> };
 
@@ -73,6 +74,7 @@ export default async function FindingPage({params }: Props) {
         isEditing={true}
         ownerSuggestions={ownerSuggestions}
       />
+      <FindingTrafficPanel projectId={id} findingId={findingId} />
     </div>
   );
 }

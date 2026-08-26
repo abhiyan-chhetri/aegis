@@ -11,6 +11,9 @@ import { Avatar } from '@/components/chrome/icons';
 import { Sev, StatusPill, SevCounts } from '@/components/ui/SevBadge';
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
 import { LivePresence } from '@/components/collab/LivePresence';
+import { NotesToFindingsModal } from './NotesToFindingsModal';
+import { RetestScopeModal } from './RetestScopeModal';
+import { BurpTab } from '@/components/burp/BurpTab';
 
 type ScopeRow = { asset: string; type: string; notes: string };
 
@@ -91,7 +94,7 @@ type Props = {
   backSlug?: string;
 };
 
-const TABS = ['Overview', 'Findings', 'Reports', 'Scope', 'Report Content', 'Notes'] as const;
+const TABS = ['Overview', 'Engagements', 'Findings', 'Reports', 'Burp', 'Scope', 'Report Content', 'Notes'] as const;
 type Tab = typeof TABS[number];
 
 const SEV_ORDER = ['all', 'critical', 'high', 'medium', 'low', 'info'];
@@ -540,6 +543,8 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
   const [search, setSearch] = useState('');
   const [deletingFinding, setDeletingFinding] = useState<string | null>(null);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
+  // "Rough notes → findings" batch AI modal
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
 
   // AI summary generation state
   const [aiPhase, setAiPhase] = useState<AIPhase>('idle');
@@ -815,6 +820,15 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
       )}
       <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', padding: '24px 28px', display: activeTab === 'Notes' ? 'none' : undefined }}>
 
+        {/* ── ENGAGEMENTS TAB (timeline, carry-over, retest scope) ── */}
+        {activeTab === 'Engagements' && (
+          <EngagementsTab
+            project={project}
+            engagementSiblings={engagementSiblings}
+            carryoverFindings={carryoverFindings}
+          />
+        )}
+
         {/* ── FINDINGS TAB ── */}
         {activeTab === 'Findings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -837,6 +851,15 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
                 </button>
               ))}
               <div style={{ flex: 1 }} />
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setNotesModalOpen(true)}
+                title="Paste your rough engagement notes and let AI propose the findings"
+                style={{ gap: 5, fontSize: 11.5 }}
+              >
+                <Ico name="sparkles" size={12} style={{ color: '#9b7fd4' }} />
+                Notes → findings
+              </button>
               <LivePresence entity={`project:${project.id}`} />
               <div style={{ position: 'relative' }}>
                 <Ico name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-3)' }} />
@@ -1111,6 +1134,11 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
           </div>
         )}
 
+        {/* ── BURP BRIDGE TAB ── */}
+        {activeTab === 'Burp' && (
+          <BurpTab projectId={project.id} projectName={project.name} />
+        )}
+
         {/* ── SCOPE TAB ── */}
         {activeTab === 'Scope' && (
           <div style={{ maxWidth: 780 }}>
@@ -1307,6 +1335,28 @@ export function ProjectTabs({ project, findings, reports, counts, scopeRows, all
         {/* Notes tab is rendered outside this container (full-screen) */}
 
 
+      {/* ── Rough notes → findings batch AI modal ── */}
+      {notesModalOpen && (
+        <NotesToFindingsModal
+          project={{
+            id: project.id,
+            name: project.name,
+            engagement: project.engagement,
+            notes: project.notes || '',
+            scope: (project as { scope?: string }).scope || '',
+            targetCode: project.targetCode,
+            engagementYear: project.engagementYear,
+          }}
+          existingTitles={findings.map(f => f.title)}
+          onClose={() => setNotesModalOpen(false)}
+          onGoToNotes={() => setActiveTab('Notes')}
+          onCreated={() => {
+            setNotesModalOpen(false);
+            // Re-fetch the server component so the new findings appear.
+            router.refresh();
+          }}
+        />
+      )}
       </div>
     </div>
   );
@@ -1875,6 +1925,7 @@ function EngagementsTab({
 
   const hasSiblings = engagementSiblings.length > 0;
   const prevEngId = project.previousEngagementId;
+  const [retestOpen, setRetestOpen] = useState(false);
   const prevSibling = engagementSiblings.find(s => s.id === prevEngId);
 
   return (
@@ -2050,6 +2101,15 @@ function EngagementsTab({
             }}>
               {carryoverFindings.filter(f => f.severity === 'critical' || f.severity === 'high').length} crit/high
             </span>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setRetestOpen(true)}
+              title="Generate an AI retest checklist from the unresolved findings"
+              style={{ gap: 5, fontSize: 11 }}
+            >
+              <Ico name="sparkles" size={12} style={{ color: '#9b7fd4' }} />
+              AI retest scope
+            </button>
           </div>
           <table className="tbl">
             <thead>
@@ -2102,6 +2162,19 @@ function EngagementsTab({
           </ol>
         </div>
       )}
+
+      {/* AI retest scope modal */}
+      {retestOpen && (
+        <RetestScopeModal
+          projectId={project.id}
+          projectName={project.name}
+          engagement={project.engagement}
+          previousEngagement={prevSibling ? `${prevSibling.code} (${prevSibling.engagementYear || prevSibling.startDate})` : 'previous engagement'}
+          findingIds={carryoverFindings.map(f => f.id)}
+          onClose={() => setRetestOpen(false)}
+        />
+      )}
+
     </div>
   );
 }

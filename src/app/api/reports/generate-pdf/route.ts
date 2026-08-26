@@ -5,6 +5,7 @@ import { promises as fs } from 'fs';
 import { ensureReportsDir } from '@/lib/ensure-reports-dir';
 import { db } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { addPdfOutline, type PdfOutlineItem } from '@/lib/pdf-outline';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,10 @@ export async function POST(request: NextRequest) {
   let browser;
   try {
     const session = await getSession();
-    const { projectId, html, filename, action } = await request.json();
+    const { projectId, html, filename, action, bookmarks } = await request.json() as {
+      projectId: string; html: string; filename?: string; action?: string;
+      bookmarks?: PdfOutlineItem[];
+    };
 
     if (!html || !projectId) {
       return NextResponse.json(
@@ -100,11 +104,14 @@ export async function POST(request: NextRequest) {
     // ── Generate PDF ───────────────────────────────────────────────────────
     if (action === 'export') {
       // Export: return PDF as a blob directly — no file written to disk.
-      const pdfBuffer = await page.pdf({
+      let pdfBuffer = await page.pdf({
         format: 'A4',
         margin: { top: 0, right: 0, bottom: 0, left: 0 },
         printBackground: true,
       });
+      if (bookmarks && bookmarks.length > 0) {
+        pdfBuffer = await addPdfOutline(pdfBuffer, bookmarks);
+      }
 
       const pdfBytes = Buffer.from(pdfBuffer);
       const downloadFilename = filename || `report-${projectId}.pdf`;
@@ -124,12 +131,15 @@ export async function POST(request: NextRequest) {
     const reportFilename = filename || `${projectId}.pdf`;
     const filePath = path.join(reportsDir, reportFilename);
 
-    await page.pdf({
-      path: filePath,
+    let pdfBuffer = await page.pdf({
       format: 'A4',
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       printBackground: true,
     });
+    if (bookmarks && bookmarks.length > 0) {
+      pdfBuffer = await addPdfOutline(pdfBuffer, bookmarks);
+    }
+    await fs.writeFile(filePath, Buffer.from(pdfBuffer));
 
     const stats = await fs.stat(filePath);
     const sizeKB = Math.round(stats.size / 1024);

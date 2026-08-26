@@ -145,8 +145,15 @@ export function EditProjectForm({ project, users }: Props) {
         toast.error('Project update failed', { description: d.error || `HTTP ${res.status}` });
         return;
       }
+      const data = await res.json().catch(() => ({}));
       setSaved(true);
       toast.success('Project updated');
+      if (data.burpPurged) {
+        const p = data.burpPurged;
+        toast.success('Project completed — Burp Bridge data cleared', {
+          description: `${p.traffic} traffic · ${p.endpoints} endpoints · ${p.checklist} checklist items · ${p.websocket} WS messages freed.`,
+        });
+      }
 
       // If data classification or criticality changed, re-score every finding
       // in this project using the new environmental matrix.

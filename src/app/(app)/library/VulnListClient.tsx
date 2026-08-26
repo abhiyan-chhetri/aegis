@@ -8,6 +8,9 @@ import { Ico } from '@/components/chrome/icons';
 import { Sev, StatusPill } from '@/components/ui/SevBadge';
 
 type Evidence = { id: string; filename: string; content: string };
+// The list payload only ships evidence metadata (ids/filenames) — the base64
+// screenshot blobs are fetched lazily when a finding's slide-over is opened.
+type EvidenceMeta = { id: string; filename: string };
 type SlaState = {
   deadline: string;
   daysRemaining: number;
@@ -30,7 +33,7 @@ type Finding = {
   createdAt: string;
   project: { id: string; name: string; code: string };
   assignee: { id: string; name: string; initials: string } | null;
-  evidence?: Evidence[];
+  evidence?: EvidenceMeta[];
   engagementType?: string;
   sla?: SlaState;
 };
@@ -111,6 +114,19 @@ function FindingSlideOver({ item, onClose, onStatusChange }: {
 }) {
   const [status, setStatus] = useState(item.status);
   const [saving, setSaving] = useState(false);
+  // null = still loading; [] = fetched, no evidence
+  const [evidence, setEvidence] = useState<Evidence[] | null>(null);
+
+  // Evidence screenshots (base64) are intentionally NOT shipped in the list
+  // payload — fetch them only when this finding is opened.
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/findings/${item.id}/evidence`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setEvidence(Array.isArray(d?.evidence) ? d.evidence : []); })
+      .catch(() => { if (!cancelled) setEvidence([]); });
+    return () => { cancelled = true; };
+  }, [item.id]);
 
   async function handleStatusChange(newStatus: string) {
     setStatus(newStatus);
@@ -187,9 +203,14 @@ function FindingSlideOver({ item, onClose, onStatusChange }: {
           </div>
 
           {(() => {
-            const components = makeLibMarkdownComponents(item.evidence || []);
+            const components = makeLibMarkdownComponents(evidence || []);
             return (
               <>
+                {evidence === null && item.evidence && item.evidence.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', marginBottom: 16, fontStyle: 'italic' }}>
+                    Loading screenshots…
+                  </div>
+                )}
                 {item.summary && (
                   <section style={{ marginBottom: 24 }}>
                     <div className="eyebrow" style={{ marginBottom: 8 }}>Summary</div>
@@ -634,6 +655,7 @@ export function VulnListClient({ findings: initialFindings, projects, users = []
 
       {selected && (
         <FindingSlideOver
+          key={selected.id}
           item={selected}
           onClose={() => setSelected(null)}
           onStatusChange={handleStatusChange}

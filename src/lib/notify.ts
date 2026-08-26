@@ -7,6 +7,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { sendWebhook } from './webhook';
+import { broadcast } from './broadcaster';
 
 export type NotificationType =
   | 'mention'
@@ -49,6 +50,13 @@ export async function createNotification(opts: CreateNotificationOpts): Promise<
     if (opts.webhook) {
       sendWebhook(`🔔 <b>${opts.title}</b>${opts.body ? `<br>${opts.body}` : ''}`);
     }
+    // Push a real-time ping to the recipient's personal SSE channel so the
+    // sidebar badge + any open inbox update instantly (no 30s poll wait).
+    broadcast(`user:${opts.userId}`, {
+      type: 'notify',
+      n: { type: opts.type, title: opts.title, body: opts.body ?? '', link: opts.link ?? '' },
+      ts: Date.now(),
+    });
   } catch (err) {
     console.warn('[notify] insert failed', err);
   }

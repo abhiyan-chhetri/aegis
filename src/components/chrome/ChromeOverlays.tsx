@@ -124,21 +124,7 @@ export function ChromeOverlays() {
     <>
       {/* Toast queue — bottom-right, above the theme button */}
       <ToastViewport />
-      {/* Floating theme button (bottom-right). Discreet, always available. */}
-      <button
-        onClick={toggleTheme}
-        title={`${theme === 'dark' ? 'Switch to light' : 'Switch to dark'} (T)`}
-        style={{
-          position: 'fixed', bottom: 18, right: 18, zIndex: 999,
-          width: 38, height: 38, borderRadius: '50%',
-          background: 'var(--bg-2)', border: '1px solid var(--line-2)',
-          color: 'var(--ink-1)', cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: 'var(--shadow-md)',
-        }}
-      >
-        <Ico name={theme === 'dark' ? 'sun' : 'moon'} size={15} />
-      </button>
+      {/* (Theme toggle button removed — switch themes via the T shortcut or ⌘K → "Toggle theme".) */}
 
       {/* G-chord toast */}
       {chord === 'g' && (

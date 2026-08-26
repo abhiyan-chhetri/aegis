@@ -68,19 +68,16 @@ export async function PATCH(
     }
 
     // Optimistic locking: if the client supplied `expectedUpdatedAt` (the
-    // updatedAt token they originally loaded), reject the write when it no
-    // longer matches the row in the DB — somebody else has edited since.
-    // Clients that omit the token continue to work for backwards compat.
-    if (typeof body.expectedUpdatedAt === 'string' && body.expectedUpdatedAt) {
-      const dbToken = currentFinding.updatedAt.toISOString();
-      if (dbToken !== body.expectedUpdatedAt) {
-        return NextResponse.json({
-          error: 'conflict',
-          message: 'This finding has been modified by another user since you loaded it. Refresh to see the latest version.',
-          currentUpdatedAt: dbToken,
-        }, { status: 409 });
-      }
-    }
+    // updatedAt token they last saw), the write is rejected ONLY when it would
+    // actually clobber a concurrent change — i.e. some field the client is
+    // writing differs from the current DB value. A stale token with identical
+    // content (e.g. saving twice in a row) is accepted, which is what makes
+    // re-saving work without a refresh. On a real conflict we return the
+    // latest values so the client can offer a merge choice.
+    const expectedUpdatedAt =
+      typeof body.expectedUpdatedAt === 'string' && body.expectedUpdatedAt
+        ? body.expectedUpdatedAt
+        : null;
     // Strip the locking token from the body so it doesn't leak into updateData
     delete body.expectedUpdatedAt;
 
@@ -154,6 +151,34 @@ export async function PATCH(
           }
         }
       }
+    }
+
+    // Soft conflict resolution (see the note above the token capture):
+    // stale token + genuinely divergent values → 409 with the latest state;
+    // stale token + identical values → accept (no-op re-save).
+    if (expectedUpdatedAt) {
+      const dbToken = currentFinding.updatedAt.toISOString();
+      if (dbToken !== expectedUpdatedAt) {
+        const clobbered: Record<string, unknown> = {};
+        for (const field of Object.keys(updateData)) {
+          const cur = (currentFinding as Record<string, unknown>)[field];
+          if (cur !== updateData[field]) clobbered[field] = cur;
+        }
+        if (Object.keys(clobbered).length > 0) {
+          return NextResponse.json({
+            error: 'conflict',
+            message: 'This finding has been modified by another user since you loaded it.',
+            currentUpdatedAt: dbToken,
+            current: clobbered,
+          }, { status: 409 });
+        }
+      }
+    }
+
+    // Nothing actually changed (e.g. save pressed twice) — return the current
+    // row untouched so we don't churn updatedAt or spam activity/notifications.
+    if (changes.length === 0) {
+      return NextResponse.json({ finding: currentFinding });
     }
 
     const finding = await db.finding.update({
@@ -347,6 +372,7 @@ export async function PATCH(
         changes,
         userId: session.id,
         userName: (session as any).name || 'Someone',
+        updatedAt: finding.updatedAt.toISOString(),
         ts: Date.now(),
       });
     } catch { /* non-critical */ }

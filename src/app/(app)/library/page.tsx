@@ -14,7 +14,11 @@ export default async function LibraryPage() {
     include: {
       project: { select: { id: true, name: true, code: true } },
       assignee: { select: { id: true, name: true, initials: true } },
-      evidence: { orderBy: { createdAt: 'asc' }, select: { id: true, filename: true, content: true } },
+      // Evidence rows carry base64 screenshot blobs — loading them for the whole
+      // list bloats the RSC payload by megabytes and is the #1 cause of the
+      // slow vuln list. Only ids/filenames are shipped here; the slide-over
+      // fetches the full evidence (with content) lazily when a finding opens.
+      evidence: { orderBy: { createdAt: 'asc' }, select: { id: true, filename: true } },
     },
   });
 

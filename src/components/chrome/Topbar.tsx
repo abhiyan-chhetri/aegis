@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Ico } from './icons';
+import { AiCostBadge } from '@/components/ai/AiCostBadge';
 import { CommandPaletteButton } from './CommandPalette';
 
 type BreadcrumbItem = string | { label: string; href: string };
@@ -46,7 +47,8 @@ export function Topbar({ title, subtitle, breadcrumb, actions, showSearch = true
         )}
         {subtitle && <div style={styles.sub}>{subtitle}</div>}
       </div>
-      <div style={styles.actions}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <AiCostBadge />
         {showSearch && <CommandPaletteButton />}
         {actions}
       </div>

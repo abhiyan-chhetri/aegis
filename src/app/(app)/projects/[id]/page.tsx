@@ -36,9 +36,12 @@ export default async function ProjectPage({ params }: Props) {
   if (engagementRows.length === 0) notFound();
 
   // ── Multiple engagements under same targetCode → year selector ────────────
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const navigatedByUUID = UUID_RE.test(slug) && engagementRows.length === 1 && engagementRows[0].id === slug;
-  if (!navigatedByUUID) {
+  // Direct navigation happens when the slug IS the engagement's id. Ids are
+  // CUIDs (e.g. cmt98xccn000bckpyszei1tmf), NOT hyphenated UUIDs — the old
+  // UUID-pattern check sent every "Back to project" / `/projects/{id}` link to
+  // the year selector instead of the project's finding list.
+  const navigatedById = engagementRows.length === 1 && engagementRows[0].id === slug;
+  if (!navigatedById) {
     return <EngagementYearSelector engagements={engagementRows} slug={slug} />;
   }
 

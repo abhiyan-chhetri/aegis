@@ -44,3 +44,11 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# runtime / local data (never commit)
+/storage/
+/dev.db
+*.tsbuildinfo
+
+# build outputs
+burp-extension/target/

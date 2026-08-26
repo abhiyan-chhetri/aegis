@@ -3,7 +3,7 @@
  *
  * POST   /api/findings/:id/watch  → subscribe
  * DELETE /api/findings/:id/watch  → unsubscribe
- * GET    /api/findings/:id/watch  → { watching: boolean, count: number }
+ * GET    /api/findings/:id/watch  → { watching, count, watchers: [{id,name,initials}] }
  *
  * Subscribers are notified on status, severity, assignee and comment changes.
  */
@@ -19,9 +19,17 @@ async function context(id: string, userId: string) {
     `SELECT EXISTS(SELECT 1 FROM "FindingWatcher" WHERE "findingId" = $1 AND "userId" = $2) AS exists`,
     id, userId,
   ).catch(() => [] as never[]);
+  // Who is watching (for the roster popover in the finding editor).
+  const watcherRows = await db.$queryRawUnsafe<{ id: string; name: string; initials: string }[]>(
+    `SELECT u.id, u.name, u.initials
+     FROM "FindingWatcher" w JOIN "User" u ON u.id = w."userId"
+     WHERE w."findingId" = $1 ORDER BY w."createdAt" ASC`,
+    id,
+  ).catch(() => [] as never[]);
   return {
     count: Number(rows[0]?.count ?? 0),
     watching: !!meRows[0]?.exists,
+    watchers: watcherRows,
   };
 }
 

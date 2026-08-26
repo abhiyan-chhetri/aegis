@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { sendWebhook } from '@/lib/webhook';
 import { broadcast } from '@/lib/broadcaster';
 import { v4 as uuidv4 } from 'uuid';
+import { purgeProjectBurpData } from '@/lib/burp-purge';
 
 // All content fields that we manage via raw SQL (bypasses Prisma schema validation entirely)
 // This includes executiveSummary even though it's in the original schema — raw SQL is safer
@@ -145,6 +146,16 @@ export async function PATCH(
     const { id } = await params;
     const body = await request.json();
 
+    // Capture the status BEFORE this update so we can detect a transition to
+    // "completed" (which auto-purges the Burp Bridge data to save space).
+    let oldStatus = '';
+    try {
+      const st = await db.$queryRawUnsafe<{ status: string }[]>(
+        `SELECT status FROM "Project" WHERE id = $1`, id,
+      );
+      oldStatus = st[0]?.status || '';
+    } catch { /* ignore */ }
+
     const {
       name, status, progress, engagement, scope,
       // Content fields — handled via raw SQL
@@ -226,6 +237,25 @@ export async function PATCH(
       ),
     ]);
 
+    // ── Auto-purge Burp Bridge data on completion ────────────────────────────
+    // Marking the project Completed ends the engagement: wipe captured traffic,
+    // endpoints, checklist, WebSockets, pins and keys to reclaim space. The
+    // audit trail records exactly what was removed.
+    let burpPurged: Awaited<ReturnType<typeof purgeProjectBurpData>> | null = null;
+    if (typeof status === 'string' && status === 'completed' && oldStatus !== 'completed') {
+      try {
+        burpPurged = await purgeProjectBurpData(id);
+        await db.$executeRawUnsafe(
+          `INSERT INTO "Activity" (id, "projectId", "userId", action, target, detail, badge, "createdAt")
+           VALUES ($1,$2,$3,'purge','Burp Bridge data',$4,'auto-on-complete',CURRENT_TIMESTAMP)`,
+          uuidv4(), id, session.id, JSON.stringify(burpPurged),
+        );
+        broadcast(`burp:${id}`, { type: 'purged', counts: burpPurged, ts: Date.now() });
+      } catch (e) {
+        console.error('[PATCH /api/projects/[id]] burp purge failed:', e);
+      }
+    }
+
     // ── Broadcast live content changes to SSE subscribers ────────────────────
     const userName = (session as { name?: string }).name || 'Someone';
     if (notes !== undefined) {
@@ -233,8 +263,7 @@ export async function PATCH(
         type: 'content_update', field: 'notes', value: String(notes),
         userId: session.id, userName, ts: Date.now(),
       });
-    }
-    if (executiveSummary !== undefined) {
+    }    if (executiveSummary !== undefined) {
       broadcast(`project:${id}`, {
         type: 'content_update', field: 'executiveSummary', value: String(executiveSummary),
         userId: session.id, userName, ts: Date.now(),
@@ -320,7 +349,7 @@ export async function PATCH(
 
     if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
 
-    return NextResponse.json({ project: { ...project, ...content } });
+    return NextResponse.json({ project: { ...project, ...content }, burpPurged });
   } catch (error: unknown) {
     console.error('[PATCH /api/projects/[id]]', error);
     if (
